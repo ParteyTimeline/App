@@ -1,0 +1,28 @@
+{
+  "name": "partey-timeline-server",
+  "version": "1.0.0",
+  "description": "Selbst gehosteter Hitster/HitStar-Klon mit Login, Räumen (eigene Geräte pro Spieler) und einer wachsenden, fair gewichteten Playlist-Bibliothek.",
+  "private": true,
+  "license": "MIT",
+  "author": "the project contributors",
+  "keywords": [
+    "hitster",
+    "party-game",
+    "music-quiz",
+    "self-hosted",
+    "websocket"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "express": "^4.19.2",
+    "express-session": "^1.18.1",
+    "ws": "^8.18.0"
+  }
+}

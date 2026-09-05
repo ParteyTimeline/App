@@ -1,0 +1,9 @@
+node_modules/
+data/
+.env
+*.log
+
+# Personal deployment scripts tied to one operator's own infrastructure —
+# not portable to other self-hosters, kept locally only. See
+# deploy/nginx.example.conf for a generic reverse-proxy starting point.
+deploy/apply-zimbra-nginx.sh

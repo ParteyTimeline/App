@@ -1,0 +1,15 @@
+services:
+  partey-timeline:
+    build: .
+    image: partey-timeline:latest
+    container_name: partey-timeline
+    restart: unless-stopped
+    # Bound to loopback only, same as the existing SnappyMail container —
+    # Zimbra's nginx reverse-proxies it, it's never exposed directly.
+    ports:
+      - "127.0.0.1:4001:3000"
+    volumes:
+      - ./data:/app/data
+    environment:
+      - SESSION_SECRET=${SESSION_SECRET}
+      - COOKIE_SECURE=1

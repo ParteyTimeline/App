@@ -1,0 +1,165 @@
+const musicbrainz = require('./musicbrainz');
+
+const DEEZER_API = 'https://api.deezer.com';
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function resolveToPlaylistId(input) {
+  let url = String(input || '').trim();
+  if (/^\d+$/.test(url)) return url;
+  if (!/^https?:\/\//i.test(url)) url = 'https://' + url;
+  let res;
+  try {
+    res = await fetch(url, { redirect: 'follow' });
+  } catch (e) {
+    throw new Error('Link konnte nicht geöffnet werden');
+  }
+  const finalUrl = res.url || url;
+  const m = finalUrl.match(/playlist\/(\d+)/);
+  if (m) return m[1];
+  throw new Error('Das ist kein Deezer-Playlist-Link');
+}
+
+async function fetchJson(url, attempt = 0) {
+  const res = await fetch(url);
+  if (res.status === 429 && attempt < 4) {
+    await sleep(400 * (attempt + 1));
+    return fetchJson(url, attempt + 1);
+  }
+  if (!res.ok) throw new Error('Deezer antwortete mit Status ' + res.status);
+  const json = await res.json();
+  if (json && json.error) throw new Error(json.error.message || 'Deezer-Fehler');
+  return json;
+}
+
+async function fetchPlaylistMeta(playlistId) {
+  return fetchJson(`${DEEZER_API}/playlist/${playlistId}`);
+}
+
+async function fetchAllTrackIds(playlistId) {
+  const ids = [];
+  let next = `${DEEZER_API}/playlist/${playlistId}/tracks?limit=100`;
+  while (next) {
+    const json = await fetchJson(next);
+    for (const t of json.data || []) ids.push(t.id);
+    next = json.next || null;
+  }
+  return ids;
+}
+
+// Deezer doesn't error when it's throttling us — it silently omits the
+// `preview` field instead. Hitting it too fast makes MOST tracks look
+// preview-less even though they aren't. So: retry a missing preview a few
+// times with backoff before believing the track genuinely has none.
+async function fetchTrackDetail(id, attempt = 0) {
+  let d;
+  try {
+    d = await fetchJson(`${DEEZER_API}/track/${id}`, attempt);
+  } catch (e) {
+    return null;
+  }
+  if (d && !d.preview && attempt < 3) {
+    await sleep(350 * (attempt + 1));
+    return fetchTrackDetail(id, attempt + 1);
+  }
+  return d;
+}
+
+// Low, staggered concurrency — the same throttling shows up as connection
+// resets / empty fields under a burst, not clean 429s, so low-and-slow beats
+// a high limit plus retries.
+async function mapLimit(items, limit, stepDelayMs, fn, onProgress) {
+  const results = new Array(items.length);
+  let i = 0;
+  let done = 0;
+  async function worker() {
+    while (i < items.length) {
+      const idx = i++;
+      results[idx] = await fn(items[idx], idx);
+      done++;
+      if (onProgress) onProgress(done, items.length);
+      if (stepDelayMs) await sleep(stepDelayMs);
+    }
+  }
+  const workers = Array.from({ length: Math.min(limit, items.length) }, worker);
+  await Promise.all(workers);
+  return results;
+}
+
+async function buildPlaylistTracks(playlistId, onProgress) {
+  const ids = await fetchAllTrackIds(playlistId);
+  const details = await mapLimit(ids, 2, 180, async (id) => {
+    const d = await fetchTrackDetail(id);
+    if (!d || !d.preview || !d.release_date) return null;
+    return await toGameTrack(d);
+  }, onProgress);
+  return details.filter(Boolean);
+}
+
+async function getFreshPreviewUrl(trackId) {
+  const d = await fetchTrackDetail(trackId);
+  if (!d || !d.preview) throw new Error('Keine Vorschau verfügbar');
+  return d.preview;
+}
+
+async function searchTrack(query) {
+  const json = await fetchJson(`${DEEZER_API}/search/track?q=${encodeURIComponent(query)}&limit=1`);
+  return (json.data && json.data[0]) || null;
+}
+
+// Deezer's release_date is often a remaster/reissue/compilation date, not
+// the song's true original release year (e.g. "Where Is The Love?" shows
+// 2022 on Deezer — the real original is 2003). Cross-check against
+// MusicBrainz's first-release-date and take whichever is EARLIER; MB
+// lookups fail closed (return null on any error/no-match), so this only
+// ever improves the year, never makes an import fail or block on it.
+async function toGameTrack(d) {
+  const artist = (d.artist && d.artist.name) || 'Unbekannt';
+  const title = d.title_short || d.title;
+  let y = parseInt(String(d.release_date).slice(0, 4), 10);
+  const mbYear = await musicbrainz.getEarliestReleaseYear(artist, title);
+  if (mbYear && mbYear < y) y = mbYear;
+  return {
+    id: d.id,
+    t: title,
+    a: artist,
+    y,
+    cover: (d.album && (d.album.cover_medium || d.album.cover_small)) || null,
+  };
+}
+
+// Spotify/YouTube playlists don't carry a canonical release year (and their
+// own preview streams are a separate can of worms) — so every song coming
+// from those sources gets matched onto its Deezer counterpart by search,
+// then goes through the exact same pipeline as a native Deezer playlist.
+// queries: [{ artist, title }]. Returns { tracks, matched, total }.
+async function matchExternalTracks(queries, onProgress) {
+  const results = await mapLimit(queries, 2, 200, async (q) => {
+    const title = (q.title || '').trim();
+    if (!title) return null;
+    const query = q.artist ? `${q.artist} ${title}` : title;
+    let hit;
+    try {
+      hit = await searchTrack(query);
+    } catch (e) {
+      return null;
+    }
+    if (!hit) return null;
+    const d = await fetchTrackDetail(hit.id);
+    if (!d || !d.preview || !d.release_date) return null;
+    return await toGameTrack(d);
+  }, onProgress);
+  const tracks = results.filter(Boolean);
+  return { tracks, matched: tracks.length, total: queries.length };
+}
+
+module.exports = {
+  resolveToPlaylistId,
+  fetchPlaylistMeta,
+  buildPlaylistTracks,
+  getFreshPreviewUrl,
+  matchExternalTracks,
+  mapLimit,
+};

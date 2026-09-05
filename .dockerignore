@@ -1,0 +1,7 @@
+node_modules
+data
+.git
+.gitignore
+*.log
+.env
+deploy/apply-zimbra-nginx.sh

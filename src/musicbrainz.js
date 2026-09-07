@@ -12,7 +12,7 @@ const MB_API = 'https://musicbrainz.org/ws/2/recording/';
 // MusicBrainz's API etiquette asks for a User-Agent that identifies the app
 // and gives them a way to reach the operator — set MUSICBRAINZ_USER_AGENT
 // in .env (see .env.example) rather than relying on this generic fallback.
-const USER_AGENT = process.env.MUSICBRAINZ_USER_AGENT || 'ParteyTimeline/1.0 (no contact set — see .env.example)';
+const USER_AGENT = process.env.MUSICBRAINZ_USER_AGENT || 'ParteyTimeline/1.0 (no contact set - see .env.example)';
 const MIN_INTERVAL_MS = 1100; // MusicBrainz's anonymous-access limit is 1 req/s
 
 let lastRequestAt = 0;

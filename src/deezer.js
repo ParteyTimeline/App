@@ -1,5 +1,6 @@
 const musicbrainz = require('./musicbrainz');
 const youtube = require('./youtube');
+const spotify = require('./spotify');
 const { sameSong } = require('./song-match');
 
 const DEEZER_API = 'https://api.deezer.com';
@@ -94,8 +95,9 @@ async function buildPlaylistTracks(playlistId, onProgress) {
   const ids = await fetchAllTrackIds(playlistId);
   const details = await mapLimit(ids, 2, 180, async (id) => {
     const d = await fetchTrackDetail(id);
-    if (!d || !d.preview || !d.release_date) return null;
-    return await toGameTrack(d);
+    if (!d) return null;
+    if (d.preview && validYear(d.release_date)) return toGameTrack(d);
+    return matchSong({ title: d.title, artist: d.artist?.name });
   }, onProgress);
   return details.filter(Boolean);
 }
@@ -134,10 +136,17 @@ async function toGameTrack(d) {
 
 // Try alternate catalog editions before searching YouTube. Candidate details
 // are checked again because search and detail responses can disagree.
-async function matchExternalTracks(queries, onProgress) {
-  const results = await mapLimit(queries, 2, 200, async (q) => {
+function validYear(date) {
+  const year = Number(String(date || '').slice(0, 4));
+  return Number.isInteger(year) && year > 1900 && year <= new Date().getFullYear();
+}
+
+async function matchSong(q) {
     const title = (q.title || '').trim();
     if (!title || !q.artist) return null;
+    if (q.spotifyId) {
+      try { const track = await spotify.findSongPreview(q); if (track) return track; } catch (e) { /* Try Deezer. */ }
+    }
     let hits = [];
     try { hits = await searchTracks(`${q.artist} ${title}`); } catch (e) { /* Try the fallback. */ }
     const seen = new Set();
@@ -152,12 +161,17 @@ async function matchExternalTracks(queries, onProgress) {
       if (!Number.isInteger(year) || year <= 1900 || year > new Date().getFullYear()) continue;
       return toGameTrack(d);
     }
+    try { const track = await spotify.findSongPreview(q, { search: true }); if (track) return track; } catch (e) { /* YouTube is last. */ }
     try { return await youtube.findSongPreview(q); } catch (e) { return null; }
-  }, onProgress);
+}
+
+async function matchExternalTracks(queries, onProgress) {
+  const results = await mapLimit(queries, 2, 200, matchSong, onProgress);
   const tracks = results.filter(Boolean);
   const youtubeCount = tracks.filter((t) => String(t.id).startsWith('youtube:')).length;
+  const spotifyCount = tracks.filter((t) => String(t.id).startsWith('spotify:')).length;
   return { tracks, matched: tracks.length, total: queries.length,
-    deezer: tracks.length - youtubeCount, youtube: youtubeCount };
+    spotify: spotifyCount, deezer: tracks.length - youtubeCount - spotifyCount, youtube: youtubeCount };
 }
 
 module.exports = {

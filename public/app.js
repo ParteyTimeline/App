@@ -570,7 +570,7 @@ function renderLobby() {
       </form>
     </div>
   </div>
-  <footer class="credit">Audio via Deezer &amp; YouTube · YouTube-Metadaten via MusicBrainz · inspiriert von
+  <footer class="credit">Audio via Spotify, Deezer &amp; YouTube · YouTube-Metadaten via MusicBrainz · inspiriert von
     <a href="https://github.com/Born2Root/HitStar" target="_blank" rel="noopener">Born2Root/HitStar</a> &amp; Hitster</footer>`;
 }
 

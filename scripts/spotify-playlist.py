@@ -32,7 +32,7 @@ def fetch_playlist(playlist_id, client):
             artists = [a.get('profile', {}).get('name', '') for a in track.get('artists', {}).get('items', [])]
             if not any(artists):
                 continue
-            queries.append({'title': track['name'], 'artist': ', '.join(filter(None, artists))})
+            queries.append({'spotifyId': track.get('uri', '').split(':')[-1], 'title': track['name'], 'artist': ', '.join(filter(None, artists))})
         offset += len(items)
     return {'name': name or f'Spotify-Playlist {playlist_id}', 'queries': queries,
             'total': total, 'skipped': total - len(queries), 'truncated': False}

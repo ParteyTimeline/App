@@ -1,5 +1,7 @@
 const { execFile } = require('child_process');
 const path = require('path');
+const musicbrainz = require('./musicbrainz');
+const { sameSong } = require('./song-match');
 
 // SpotAPI reads full public playlists without an API client or user login.
 // The embed reader remains a fallback with an explicit truncation warning.
@@ -20,6 +22,7 @@ function cleanTitle(raw) {
 async function fetchEmbedTracks(playlistId) {
   const res = await fetch(`https://open.spotify.com/embed/playlist/${playlistId}`, {
     headers: { 'User-Agent': 'Mozilla/5.0 (compatible; ParteyTimeline/1.0)' },
+    signal: AbortSignal.timeout(15000),
   });
   if (!res.ok) throw new Error('Spotify-Playlist nicht erreichbar (Status ' + res.status + ')');
   const html = await res.text();
@@ -40,7 +43,7 @@ async function fetchEmbedTracks(playlistId) {
     truncated: entity.trackList.length >= EMBED_TRACK_LIMIT,
     queries: entity.trackList
       .filter((t) => t.title)
-      .map((t) => ({ title: cleanTitle(t.title), artist: t.subtitle || '' })),
+      .map((t) => ({ spotifyId: extractTrackIdsFromText(t.uri || '')[0], title: cleanTitle(t.title), artist: t.subtitle || '' })),
   };
 }
 
@@ -85,8 +88,10 @@ function extractTrackIdsFromText(text) {
 }
 
 async function fetchTrackEmbedInfo(id) {
+  if (!/^[a-zA-Z0-9]{22}$/.test(id)) return null;
   const res = await fetch(`https://open.spotify.com/embed/track/${id}`, {
     headers: { 'User-Agent': 'Mozilla/5.0 (compatible; ParteyTimeline/1.0)' },
+    signal: AbortSignal.timeout(15000),
   });
   if (!res.ok) return null;
   const html = await res.text();
@@ -101,6 +106,10 @@ async function fetchTrackEmbedInfo(id) {
   const entity = data && data.props && data.props.pageProps && data.props.pageProps.state && data.props.pageProps.state.data && data.props.pageProps.state.data.entity;
   if (!entity || entity.type !== 'track') return null;
   return {
+    spotifyId: id,
+    preview: validPreviewUrl(entity.audioPreview?.url),
+    releaseDate: entity.releaseDate?.isoString || entity.release_date,
+    cover: entity.coverArt?.sources?.[0]?.url || null,
     title: cleanTitle(entity.title || entity.name || ''),
     artist: (entity.artists && entity.artists.map((a) => a.name).join(', ')) || '',
   };
@@ -147,16 +156,68 @@ function parseExportifyCsv(text) {
   if (rows.length < 2) throw new Error('CSV ist leer');
   const header = rows[0].map((h) => h.trim().toLowerCase());
   const titleIdx = header.indexOf('track name');
+  const uriIdx = header.indexOf('track uri');
   const artistIdx = header.findIndex((h) => h.startsWith('artist name'));
   if (titleIdx === -1 || artistIdx === -1) {
     throw new Error('CSV hat nicht die erwarteten Exportify-Spalten (Track Name / Artist Name(s))');
   }
   return rows.slice(1)
     .filter((r) => r[titleIdx])
-    .map((r) => ({ title: cleanTitle(r[titleIdx] || ''), artist: (r[artistIdx] || '').split(',')[0].trim() }));
+    .map((r) => ({ spotifyId: extractTrackIdsFromText(r[uriIdx] || '')[0], title: cleanTitle(r[titleIdx] || ''), artist: (r[artistIdx] || '').split(',')[0].trim() }));
+}
+
+function validPreviewUrl(value) {
+  try {
+    const url = new URL(value);
+    return url.protocol === 'https:' && /(^|\.)scdn\.co$/.test(url.hostname) &&
+      url.pathname.startsWith('/mp3-preview/') ? url.href : null;
+  } catch (e) { return null; }
+}
+
+async function getFreshPreviewUrl(id) {
+  const track = await fetchTrackEmbedInfo(id);
+  if (!track?.preview) throw new Error('Keine Spotify-Vorschau verfügbar');
+  return track.preview;
+}
+
+async function searchTracks(query) {
+  return new Promise((resolve, reject) => {
+    execFile('python3', [path.join(__dirname, '..', 'scripts', 'spotify-search.py'),
+      `${query.artist} ${query.title}`], { timeout: 60000, maxBuffer: 2 * 1024 * 1024 },
+    (error, stdout) => {
+      if (error) return reject(error);
+      try {
+        const tracks = JSON.parse(stdout);
+        if (!Array.isArray(tracks)) throw new Error('Ungültige Spotify-Suche');
+        resolve(tracks.slice(0, 10));
+      } catch (e) { reject(e); }
+    });
+  });
+}
+
+async function findSongPreview(query, { search = false } = {}) {
+  let candidates;
+  if (search) candidates = await searchTracks(query);
+  else candidates = query.spotifyId ? [query] : [];
+  for (const candidate of candidates) {
+    if (!sameSong(query, candidate.title, [candidate.artist])) continue;
+    let track;
+    try { track = await fetchTrackEmbedInfo(candidate.spotifyId); } catch (e) { continue; }
+    if (!track?.preview || !sameSong(query, track.title, [track.artist])) continue;
+    let metadata = null;
+    try { metadata = await musicbrainz.findRecording(track.artist, track.title); } catch (e) { /* Use catalog date. */ }
+    const year = metadata?.y || Number(String(track.releaseDate || '').slice(0, 4));
+    if (!Number.isInteger(year) || year <= 1900 || year > new Date().getFullYear()) continue;
+    return { id: `spotify:${track.spotifyId}`, t: track.title, a: track.artist,
+      y: year, cover: track.cover, ...(metadata?.musicbrainzId ? { musicbrainzId: metadata.musicbrainzId } : {}) };
+  }
+  return null;
 }
 
 module.exports = {
+  findSongPreview,
+  getFreshPreviewUrl,
+  validPreviewUrl,
   extractPlaylistId,
   fetchEmbedTracks,
   fetchPlaylistTracks,

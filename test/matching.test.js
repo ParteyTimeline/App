@@ -3,11 +3,14 @@ const assert = require('node:assert/strict');
 const deezer = require('../src/deezer');
 const youtube = require('../src/youtube');
 const mb = require('../src/musicbrainz');
+const spotify = require('../src/spotify');
+const originalSpotify = spotify.findSongPreview;
 const originals = { fetch: global.fetch, fallback: youtube.findSongPreview, year: mb.getEarliestReleaseYear };
-afterEach(() => { global.fetch = originals.fetch; youtube.findSongPreview = originals.fallback; mb.getEarliestReleaseYear = originals.year; });
+afterEach(() => { spotify.findSongPreview = originalSpotify; global.fetch = originals.fetch; youtube.findSongPreview = originals.fallback; mb.getEarliestReleaseYear = originals.year; });
 const q = { title: 'Song', artist: 'Artist' };
 const hit = (id, title = 'Song', artist = 'Artist') => ({ id, title, artist: { name: artist } });
 function setup(hits, details) {
+  spotify.findSongPreview = async () => null;
   const requested = [];
   global.fetch = async (url) => {
     requested.push(url);
@@ -56,4 +59,29 @@ test('video selection rejects covers, remixes, wrong artists and live streams', 
   assert.equal(youtube.selectSongVideo(candidates, q), null);
   assert.equal(youtube.selectSongVideo([{ id: '12345678901', title: 'Song', channel: 'Artist - Topic' }], q).id, '12345678901');
   assert.equal(youtube.selectSongVideo([{ id: '12345678901', title: 'Artist - Song (Official Video)' }], q).id, '12345678901');
+});
+
+test('original Spotify preview is preferred before Deezer', async () => {
+  const requests = setup([], {});
+  spotify.findSongPreview = async () => ({ id: 'spotify:1234567890123456789012', y: 1990 });
+  const result = await deezer.matchExternalTracks([{ ...q, spotifyId: '1234567890123456789012' }]);
+  assert.equal(result.spotify, 1);
+  assert.equal(requests.length, 0);
+});
+test('Spotify search runs after Deezer and before YouTube', async () => {
+  setup([], {});
+  const calls = [];
+  spotify.findSongPreview = async (query, options) => { calls.push(options.search); return { id: 'spotify:1234567890123456789012', y: 1990 }; };
+  youtube.findSongPreview = async () => { assert.fail('YouTube must not run'); };
+  const result = await deezer.matchExternalTracks([q]);
+  assert.equal(result.spotify, 1);
+  assert.deepEqual(calls, [true]);
+});
+test('native Deezer playlists also use Spotify when their preview is missing', async () => {
+  setup([], {});
+  global.fetch = async (url) => ({ ok: true, json: async () => url.includes('/tracks?')
+    ? { data: [{ id: 1 }] } : url.includes('/search/') ? { data: [] } : hit(1) });
+  spotify.findSongPreview = async () => ({ id: 'spotify:1234567890123456789012', y: 1990 });
+  const tracks = await deezer.buildPlaylistTracks('10');
+  assert.equal(tracks[0].id, 'spotify:1234567890123456789012');
 });

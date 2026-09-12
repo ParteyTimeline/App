@@ -11,16 +11,17 @@ Songs kommt nicht öfter dran als eine mit 15 — wer mehr Songs beisteuert, hat
 
 ## Wie die Playlist-Quellen funktionieren
 
-- **Deezer**: nativ, volle Metadaten (Erscheinungsjahr, Cover, 30s-Vorschau) direkt von der
-  öffentlichen Deezer-API.
+- **Deezer**: verwendet zuerst die eigene Vorschau. Fehlt diese, prüft die App passende
+  alternative Deezer-Veröffentlichungen, danach Spotify-Vorschauen und zuletzt YouTube.
 - **Spotify**: liest öffentliche Playlisten vollständig und seitenweise über SpotAPI, ohne
-  Spotify-Login oder eigenen API-Client. Titel und Interpret werden anschließend unter bis zu zehn Deezer-Treffern
-  abgeglichen; passende alternative Veröffentlichungen werden auf Vorschauen geprüft.
-  Ohne geeignete Deezer-Vorschau sucht die App nach einem MusicBrainz-Treffer mit Jahr
-  und einem passenden YouTube-Video für den 30-Sekunden-Clip. Der Importhinweis zählt
-  Deezer- und YouTube-Songs getrennt. Dies gilt auch für Spotify-Track-Links und CSV. Ist SpotAPI nicht verfügbar, wird die öffentliche Embed-Seite verwendet; diese
-  liefert höchstens 100 Songs und der Importhinweis nennt den Fallback ausdrücklich.
-  Alternativ können weiterhin Spotify-Track-Links oder Exportify-CSV eingefügt werden.
+  Spotify-Login oder eigenen API-Client. Zuerst wird die Vorschau der originalen Spotify-ID
+  aus der öffentlichen Embed-Seite geprüft. Danach folgen passende Deezer-Veröffentlichungen,
+  weitere Spotify-Treffer und zuletzt YouTube mit MusicBrainz-Metadaten.
+  Die Importhinweise zählen Spotify-, Deezer- und YouTube-Songs getrennt.
+  Spotify-Track-Links und Exportify-CSV behalten vorhandene Spotify-IDs ebenfalls bei.
+  Ist SpotAPI nicht verfügbar, wird die Playlist-Embed-Seite verwendet; diese liefert höchstens
+  100 Songs und der Importhinweis nennt den Fallback ausdrücklich.
+  Spotify-Vorschau-URLs werden beim Abspielen frisch geladen; nicht jeder Track hat eine.
 - **YouTube**: liest bis zu 300 Videos über `yt-dlp`. Titel und Interpret werden aus den
   Video-Metadaten erkannt und mit MusicBrainz abgeglichen. Nur eindeutige, passende Treffer
   mit Erscheinungsjahr werden übernommen; Titel, Interpret und Jahr kommen von MusicBrainz.

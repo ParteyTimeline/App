@@ -137,7 +137,7 @@ async function runImport(playlistId, { source, url, pasteKind, pasteText }) {
       const match = await deezer.matchExternalTracks(queries, setProgress);
       tracks = match.tracks;
       defaultName = `Spotify-Export (${queries.length} Songs)`;
-      note = `${match.matched} von ${match.total} Songs gefunden (${match.deezer} Deezer, ${match.youtube} YouTube)`;
+      note = `${match.matched} von ${match.total} Songs gefunden (${match.spotify} Spotify, ${match.deezer} Deezer, ${match.youtube} YouTube)`;
     } else if (pasteKind === 'spotify-tracklist') {
       const ids = spotify.extractTrackIdsFromText(pasteText);
       const infos = await deezer.mapLimit(ids, 3, 120, (id) => spotify.fetchTrackEmbedInfo(id), (d, t) => setProgress(Math.round(d / 2), t * 2));
@@ -145,14 +145,14 @@ async function runImport(playlistId, { source, url, pasteKind, pasteText }) {
       const match = await deezer.matchExternalTracks(queries, (d, t) => setProgress(ids.length + d, ids.length * 2));
       tracks = match.tracks;
       defaultName = `Spotify-Auswahl (${ids.length} Songs)`;
-      note = `${match.matched} von ${ids.length} eingefügten Songs gefunden (${match.deezer} Deezer, ${match.youtube} YouTube)`;
+      note = `${match.matched} von ${ids.length} eingefügten Songs gefunden (${match.spotify} Spotify, ${match.deezer} Deezer, ${match.youtube} YouTube)`;
     } else if (source === 'deezer') {
       const playlistId = await deezer.resolveToPlaylistId(url);
       const meta = await deezer.fetchPlaylistMeta(playlistId);
       tracks = await deezer.buildPlaylistTracks(playlistId, setProgress);
       defaultName = meta.title;
       if (meta.nb_tracks && tracks.length < meta.nb_tracks) {
-        note = `${tracks.length} von ${meta.nb_tracks} Songs abspielbar (Rest hat bei Deezer keine Vorschau, meist aus Lizenzgründen)`;
+        note = `${tracks.length} von ${meta.nb_tracks} Songs abspielbar (Rest ohne passende Vorschau oder Metadaten nach Deezer-, Spotify- und YouTube-Prüfung)`;
       }
     } else if (source === 'spotify') {
       const spotifyId = spotify.extractPlaylistId(url);
@@ -160,7 +160,7 @@ async function runImport(playlistId, { source, url, pasteKind, pasteText }) {
       const match = await deezer.matchExternalTracks(embed.queries, setProgress);
       tracks = match.tracks;
       defaultName = embed.name;
-      note = `${match.matched} von ${embed.total ?? match.total} Songs gefunden (${match.deezer} Deezer, ${match.youtube} YouTube)${embed.fallback ? ' (vollständiger Spotify-Abruf fehlgeschlagen; Embed-Fallback)' : ''}${embed.truncated ? ' (nur die ersten 100 der Spotify-Playlist wurden gelesen — für mehr: Songs in Spotify markieren, kopieren und hier einfügen, oder als CSV exportieren)' : ''}`;
+      note = `${match.matched} von ${embed.total ?? match.total} Songs gefunden (${match.spotify} Spotify, ${match.deezer} Deezer, ${match.youtube} YouTube)${embed.fallback ? ' (vollständiger Spotify-Abruf fehlgeschlagen; Embed-Fallback)' : ''}${embed.truncated ? ' (nur die ersten 100 der Spotify-Playlist wurden gelesen — für mehr: Songs in Spotify markieren, kopieren und hier einfügen, oder als CSV exportieren)' : ''}`;
     } else if (source === 'youtube') {
       const yt = await youtube.fetchPlaylistQueries(url);
       const match = await youtube.matchPlaylistTracks(yt.queries, setProgress);
@@ -243,7 +243,9 @@ app.get('/api/track/:id/preview', auth.requireAuth, async (req, res) => {
     return streamPreview(req.params.id.slice(8), req, res);
   }
   try {
-    const url = await deezer.getFreshPreviewUrl(req.params.id);
+    const url = req.params.id.startsWith('spotify:')
+      ? await spotify.getFreshPreviewUrl(req.params.id.slice(8))
+      : await deezer.getFreshPreviewUrl(req.params.id);
     res.redirect(302, url);
   } catch (e) {
     res.status(404).send('Keine Vorschau verfügbar');

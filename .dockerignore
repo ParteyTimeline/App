@@ -5,3 +5,6 @@ data
 *.log
 .env
 deploy/apply-zimbra-nginx.sh
+
+__pycache__/
+*.pyc

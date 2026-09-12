@@ -7,3 +7,6 @@ data/
 # not portable to other self-hosters, kept locally only. See
 # deploy/nginx.example.conf for a generic reverse-proxy starting point.
 deploy/apply-zimbra-nginx.sh
+
+__pycache__/
+*.pyc

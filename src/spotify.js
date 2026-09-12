@@ -1,11 +1,8 @@
-// No Spotify API credentials are involved. The public embed page
-// (open.spotify.com/embed/playlist/<id>) server-renders a __NEXT_DATA__
-// JSON blob with the visible track list (title/artist/cover) for anyone,
-// logged in or not — the same data a browser shows when you paste a
-// playlist link into a chat. We only read that public listing, never any
-// account data or protected audio stream. Songs are then matched onto
-// Deezer (see deezer.matchExternalTracks) for release year + our own
-// preview/cover pipeline.
+const { execFile } = require('child_process');
+const path = require('path');
+
+// SpotAPI reads full public playlists without an API client or user login.
+// The embed reader remains a fallback with an explicit truncation warning.
 const EMBED_TRACK_LIMIT = 100; // the embed payload only ships the first page
 
 function extractPlaylistId(url) {
@@ -45,6 +42,28 @@ async function fetchEmbedTracks(playlistId) {
       .filter((t) => t.title)
       .map((t) => ({ title: cleanTitle(t.title), artist: t.subtitle || '' })),
   };
+}
+
+async function fetchPlaylistTracks(playlistId) {
+  if (!/^[a-zA-Z0-9]{22}$/.test(playlistId)) throw new Error('Ungültige Spotify-Playlist-ID');
+  try {
+    const result = await new Promise((resolve, reject) => {
+      execFile('python3', [path.join(__dirname, '..', 'scripts', 'spotify-playlist.py'), playlistId],
+        { timeout: 180000, maxBuffer: 8 * 1024 * 1024 }, (error, stdout) => {
+          if (error) return reject(error);
+          try { resolve(JSON.parse(stdout)); } catch (e) { reject(e); }
+        });
+    });
+    if (!Array.isArray(result.queries) || !Number.isInteger(result.total) ||
+        result.total < result.queries.length || !result.queries.every((q) =>
+          typeof q.title === 'string' && typeof q.artist === 'string')) {
+      throw new Error('Ungültige Spotify-Antwort');
+    }
+    return { ...result, queries: result.queries.map((q) => ({ ...q, title: cleanTitle(q.title) })) };
+  } catch (e) {
+    const fallback = await fetchEmbedTracks(playlistId);
+    return { ...fallback, fallback: true };
+  }
 }
 
 // --- Bulk track-link paste ------------------------------------------------
@@ -140,6 +159,7 @@ function parseExportifyCsv(text) {
 module.exports = {
   extractPlaylistId,
   fetchEmbedTracks,
+  fetchPlaylistTracks,
   EMBED_TRACK_LIMIT,
   extractTrackIdsFromText,
   fetchTrackEmbedInfo,

@@ -156,11 +156,11 @@ async function runImport(playlistId, { source, url, pasteKind, pasteText }) {
       }
     } else if (source === 'spotify') {
       const spotifyId = spotify.extractPlaylistId(url);
-      const embed = await spotify.fetchEmbedTracks(spotifyId);
+      const embed = await spotify.fetchPlaylistTracks(spotifyId);
       const match = await deezer.matchExternalTracks(embed.queries, setProgress);
       tracks = match.tracks;
       defaultName = embed.name;
-      note = `${match.matched} von ${match.total} Songs auf Deezer gefunden${embed.truncated ? ' (nur die ersten 100 der Spotify-Playlist wurden gelesen — für mehr: Songs in Spotify markieren, kopieren und hier einfügen, oder als CSV exportieren)' : ''}`;
+      note = `${match.matched} von ${embed.total ?? match.total} Songs auf Deezer gefunden${embed.fallback ? ' (vollständiger Spotify-Abruf fehlgeschlagen; Embed-Fallback)' : ''}${embed.truncated ? ' (nur die ersten 100 der Spotify-Playlist wurden gelesen — für mehr: Songs in Spotify markieren, kopieren und hier einfügen, oder als CSV exportieren)' : ''}`;
     } else if (source === 'youtube') {
       const yt = await youtube.fetchPlaylistQueries(url);
       const match = await youtube.matchPlaylistTracks(yt.queries, setProgress);

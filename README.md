@@ -13,10 +13,11 @@ Songs kommt nicht öfter dran als eine mit 15 — wer mehr Songs beisteuert, hat
 
 - **Deezer**: nativ, volle Metadaten (Erscheinungsjahr, Cover, 30s-Vorschau) direkt von der
   öffentlichen Deezer-API.
-- **Spotify**: liest die öffentliche Embed-Seite (`open.spotify.com/embed/playlist/<id>`) — keine
-  API-Keys nötig, aber **nur die ersten 100 Songs** einer Playlist (Embed-Seiten-Limit). Jeder Song
-  wird danach per Titel/Interpret auf Deezer gesucht und darüber gespielt (Erscheinungsjahr kommt
-  von Deezer, nicht von Spotify).
+- **Spotify**: liest öffentliche Playlisten vollständig und seitenweise über SpotAPI, ohne
+  Spotify-Login oder eigenen API-Client. Titel und Interpret werden anschließend auf Deezer
+  gesucht. Ist SpotAPI nicht verfügbar, wird die öffentliche Embed-Seite verwendet; diese
+  liefert höchstens 100 Songs und der Importhinweis nennt den Fallback ausdrücklich.
+  Alternativ können weiterhin Spotify-Track-Links oder Exportify-CSV eingefügt werden.
 - **YouTube**: liest bis zu 300 Videos über `yt-dlp`. Titel und Interpret werden aus den
   Video-Metadaten erkannt und mit MusicBrainz abgeglichen. Nur eindeutige, passende Treffer
   mit Erscheinungsjahr werden übernommen; Titel, Interpret und Jahr kommen von MusicBrainz.
@@ -43,7 +44,10 @@ Warnung), aber alle Logins gehen beim nächsten Neustart verloren. Für YouTube-
 braucht es zusätzlich aktuelles `yt-dlp[default]` und `ffmpeg` im `PATH`, für die
 YouTube-Audioextraktion außerdem Node.js 22 oder neuer
 ([yt-dlp-Laufzeit-Anforderungen](https://github.com/yt-dlp/yt-dlp/wiki/EJS)); das Docker-Image bringt diese mit.
-Deezer- und Spotify-Import funktionieren ohne die zusätzlichen Programme.
+Für vollständige Spotify-Playlisten zusätzlich `python3 -m pip install "spotapi==1.2.8" pymongo redis`
+installieren. Die beiden Zusatzpakete beheben fehlende Import-Abhängigkeiten von SpotAPI;
+es werden keine MongoDB- oder Redis-Server benötigt. Docker enthält diese Pakete bereits.
+Deezer-Import und Spotify-Embed-Fallback funktionieren ohne Python.
 
 ## Mit Docker
 
@@ -83,7 +87,8 @@ genügt ein einfacher `location / { proxy_pass ...; }`-Block mit denselben Heade
 
 - Räume (laufende Spiele) leben nur im Arbeitsspeicher — ein Server-Neustart beendet alle laufenden
   Runden (Accounts/Playlisten bleiben erhalten).
-- Spotify-Import liest nur die ersten 100 Songs einer Playlist (Embed-Seiten-Limit).
+- SpotAPI nutzt inoffizielle Spotify-Endpunkte, die sich ändern können. Der Embed-Fallback
+  liefert höchstens 100 Songs. Vollständige Importe sind auf 10.000 Einträge begrenzt.
 - YouTube-Titel-Erkennung und MusicBrainz-Abgleich garantieren keine 100 % Trefferquote.
   MusicBrainz-Abfragen sind auf etwa eine Anfrage pro Sekunde begrenzt.
 - YouTube kann Audioanfragen blockieren; `yt-dlp` muss aktuell gehalten werden.
@@ -98,7 +103,7 @@ Dieses Projekt ist ein inoffizielles, nicht-kommerzielles Fanprojekt, inspiriert
 Spielmechanik von *Hitster*). Es steht in keiner Verbindung zu und wird nicht unterstützt von
 Hitster A/S oder deren Rechteinhabern.
 
-Die App verwendet Deezers öffentliche API und Vorschauen, Spotifys öffentliche Embed-Seiten
+Die App verwendet Deezers öffentliche API und Vorschauen, Spotifys öffentliche Playlist-Metadaten über SpotAPI beziehungsweise Embed-Seiten
 sowie MusicBrainz-Metadaten. Für YouTube werden Playlist-Metadaten und Audio über `yt-dlp`
 abgerufen; `ffmpeg` erstellt daraus kurze Spielclips im Arbeitsspeicher. Wer diese App selbst hostet, ist
 selbst dafür verantwortlich, das im eigenen Nutzungskontext (privat, nicht-kommerziell) mit den

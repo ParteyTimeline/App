@@ -17,11 +17,16 @@ Songs kommt nicht öfter dran als eine mit 15 — wer mehr Songs beisteuert, hat
   API-Keys nötig, aber **nur die ersten 100 Songs** einer Playlist (Embed-Seiten-Limit). Jeder Song
   wird danach per Titel/Interpret auf Deezer gesucht und darüber gespielt (Erscheinungsjahr kommt
   von Deezer, nicht von Spotify).
-- **YouTube**: liest die Playlist über `yt-dlp` (muss auf dem Server installiert sein/ist im
-  Docker-Image enthalten), max. 300 Videos. Songtitel werden aus dem Video-Titel heuristisch
-  geraten (`Artist - Titel`-Muster) und ebenfalls auf Deezer gematcht — Trefferquote hängt stark
-  davon ab, wie sauber die Video-Titel sind (in Tests: 64–91 %). Nicht gefundene Songs werden
-  einfach übersprungen; die Antwort beim Hinzufügen zeigt, wie viele es waren.
+- **YouTube**: liest bis zu 300 Videos über `yt-dlp`. Titel und Interpret werden aus den
+  Video-Metadaten erkannt und mit MusicBrainz abgeglichen. Nur eindeutige, passende Treffer
+  mit Erscheinungsjahr werden übernommen; Titel, Interpret und Jahr kommen von MusicBrainz.
+  Das Audio kommt direkt vom ursprünglichen YouTube-Video, unabhängig von Deezer.
+  Beim ersten Abspielen erzeugen `yt-dlp` und `ffmpeg` einen 30-Sekunden-MP3-Clip
+  (die ersten 30 Sekunden). Das kann eine kurze Ladezeit verursachen. Bis zu 32 Clips
+  bleiben im Arbeitsspeicher; es werden keine Audiodateien dauerhaft gespeichert.
+  Private, gesperrte oder entfernte Videos können trotz passender Metadaten nicht abspielbar sein.
+  Vorhandene YouTube-Playlisten behalten ihre bisherigen Deezer-Tracks; für den neuen Ablauf
+  die Playlist aus der Bibliothek entfernen und erneut importieren.
 
 Playlisten hinzufügen kann etwas dauern (Deezer throttled bei zu vielen parallelen Anfragen sehr
 aggressiv — der Import läuft deshalb bewusst langsam mit Retries; bei ~100 Songs ca. 20–80s).
@@ -35,8 +40,10 @@ SESSION_SECRET=$(node -e "console.log(require('crypto').randomBytes(32).toString
 
 Läuft dann auf `http://localhost:3000`. Ohne `SESSION_SECRET` startet der Server trotzdem (mit
 Warnung), aber alle Logins gehen beim nächsten Neustart verloren. Für YouTube-Playlist-Importe
-braucht es zusätzlich `yt-dlp` im `PATH` (Deezer- und Spotify-Import funktionieren ohne); das
-Docker-Image bringt es bereits mit.
+braucht es zusätzlich aktuelles `yt-dlp[default]` und `ffmpeg` im `PATH`, für die
+YouTube-Audioextraktion außerdem Node.js 22 oder neuer
+([yt-dlp-Laufzeit-Anforderungen](https://github.com/yt-dlp/yt-dlp/wiki/EJS)); das Docker-Image bringt diese mit.
+Deezer- und Spotify-Import funktionieren ohne die zusätzlichen Programme.
 
 ## Mit Docker
 
@@ -77,7 +84,9 @@ genügt ein einfacher `location / { proxy_pass ...; }`-Block mit denselben Heade
 - Räume (laufende Spiele) leben nur im Arbeitsspeicher — ein Server-Neustart beendet alle laufenden
   Runden (Accounts/Playlisten bleiben erhalten).
 - Spotify-Import liest nur die ersten 100 Songs einer Playlist (Embed-Seiten-Limit).
-- YouTube-Titel-Erkennung ist ein Best-Effort-Regex, keine Garantie für 100 % Trefferquote.
+- YouTube-Titel-Erkennung und MusicBrainz-Abgleich garantieren keine 100 % Trefferquote.
+  MusicBrainz-Abfragen sind auf etwa eine Anfrage pro Sekunde begrenzt.
+- YouTube kann Audioanfragen blockieren; `yt-dlp` muss aktuell gehalten werden.
 - `npm audit` zeigt eine moderate `qs`-DoS-Advisory (transitive Abhängigkeit von `express`); es
   gibt aktuell keine gepatchte Version. Für diese App (keine komplexen Query-Strings von
   Fremden) geringes Risiko, aber im Auge behalten.
@@ -89,11 +98,9 @@ Dieses Projekt ist ein inoffizielles, nicht-kommerzielles Fanprojekt, inspiriert
 Spielmechanik von *Hitster*). Es steht in keiner Verbindung zu und wird nicht unterstützt von
 Hitster A/S oder deren Rechteinhabern.
 
-Die App liest ausschließlich öffentlich zugängliche Metadaten und offizielle Vorschau-Mechanismen:
-Deezers öffentliche API (inkl. der von Deezer selbst bereitgestellten 30-Sekunden-Vorschauen),
-Spotifys öffentliche Embed-Seiten (keine Downloads, keine API-Keys) und `yt-dlp` ausschließlich
-zum Lesen von YouTube-Playlist-**Metadaten** (Titel/Videoliste) — es wird zu keinem Zeitpunkt
-Audio oder Video von YouTube heruntergeladen oder extrahiert. Wer diese App selbst hostet, ist
+Die App verwendet Deezers öffentliche API und Vorschauen, Spotifys öffentliche Embed-Seiten
+sowie MusicBrainz-Metadaten. Für YouTube werden Playlist-Metadaten und Audio über `yt-dlp`
+abgerufen; `ffmpeg` erstellt daraus kurze Spielclips im Arbeitsspeicher. Wer diese App selbst hostet, ist
 selbst dafür verantwortlich, das im eigenen Nutzungskontext (privat, nicht-kommerziell) mit den
 Nutzungsbedingungen der jeweiligen Plattform sowie dem in der eigenen Rechtsordnung geltenden
 Recht in Einklang zu halten.

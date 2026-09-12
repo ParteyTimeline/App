@@ -189,6 +189,7 @@ function togglePlay() {
   }
   const a = getAudio();
   if (!a.src) return;
+  if (a.error) a.load();
   if (a.paused) a.play().catch(() => {}); else a.pause();
 }
 
@@ -569,7 +570,7 @@ function renderLobby() {
       </form>
     </div>
   </div>
-  <footer class="credit">Songs via Deezer (Spotify/YouTube-Playlisten werden gematcht) · inspiriert von
+  <footer class="credit">Audio via Deezer &amp; YouTube · YouTube-Metadaten via MusicBrainz · inspiriert von
     <a href="https://github.com/Born2Root/HitStar" target="_blank" rel="noopener">Born2Root/HitStar</a> &amp; Hitster</footer>`;
 }
 
@@ -765,7 +766,7 @@ function renderGamePlay(s) {
           <button class="play-btn" data-action="toggleplay" aria-label="${isPlaying ? 'Pause' : 'Play'}">${isPlaying ? '❚❚' : '▶'}</button>
         </div>
         ${iAmHostDevice
-          ? `<div class="progress"><i style="width:${pct}%"></i></div><span class="player-hint">Deezer-Anspieler</span>`
+          ? `<div class="progress"><i style="width:${pct}%"></i></div><span class="player-hint">${getAudio().error ? 'Audio nicht verfügbar – zum Wiederholen Play drücken' : '30-Sekunden-Anspieler'}</span>`
           : `<span class="player-hint">🔊 spielt auf ${esc(s.audioHost)}s Gerät</span>`}
       </div>
       ${renderAudioControl(s)}
@@ -998,6 +999,7 @@ function bindEvents() {
   };
   a.addEventListener('play', () => { reportIfHost(true); render(); });
   a.addEventListener('pause', () => { reportIfHost(false); render(); });
+  a.addEventListener('error', () => { reportIfHost(false); render(); });
   a.addEventListener('ended', () => { reportIfHost(false); render(); });
   a.addEventListener('timeupdate', () => {
     const bar = document.querySelector('.progress i');

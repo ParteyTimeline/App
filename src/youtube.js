@@ -1,4 +1,5 @@
 const { execFile } = require('child_process');
+const musicbrainz = require('./musicbrainz');
 
 function extractPlaylistId(url) {
   const m = String(url).match(/[?&]list=([a-zA-Z0-9_-]+)/);
@@ -9,7 +10,7 @@ function ytdlpFlatPlaylist(url) {
   return new Promise((resolve, reject) => {
     execFile(
       'yt-dlp',
-      ['--flat-playlist', '-J', '--no-warnings', '--playlist-end', '300', url],
+      ['--ignore-config', '--flat-playlist', '-J', '--no-warnings', '--playlist-end', '300', url],
       { maxBuffer: 1024 * 1024 * 64, timeout: 90000 },
       (err, stdout, stderr) => {
         if (err) {
@@ -33,11 +34,11 @@ function ytdlpFlatPlaylist(url) {
 
 // Video titles are free text, not structured song data — this is a best-
 // effort "Artist - Title" heuristic. Anything that fails to match on
-// Deezer afterwards is simply dropped and reported in the import summary.
+// MusicBrainz afterwards is simply dropped and reported in the import summary.
 function cleanVideoTitle(raw) {
   let s = String(raw || '');
   s = s.split('|')[0];
-  s = s.replace(/[([]\s*(official\s*)?(music\s*)?(lyric\s*)?(video|audio|visualizer)\s*[)\]]/gi, '');
+  s = s.replace(/[([]\s*(official\s*)?(music\s*)?(lyrics?\s*)?(video|audio|visualizer|lyrics?)\s*[)\]]/gi, '');
   s = s.replace(/\b(HD|4K|HQ)\b/g, '');
   s = s.replace(/\s{2,}/g, ' ').trim();
   return s;
@@ -63,8 +64,30 @@ async function fetchPlaylistQueries(url) {
   return {
     name: data.title || 'YouTube-Playlist',
     truncated: entries.length >= 300,
-    queries: entries.map((e) => splitArtistTitle(cleanVideoTitle(e.title))),
+    queries: entries.map((e) => {
+      const query = e.track
+        ? { artist: '', title: e.track.trim() }
+        : splitArtistTitle(cleanVideoTitle(e.title));
+      if (e.artist) query.artist = e.artist;
+      else if (!query.artist && / - Topic$/.test(e.channel || e.uploader || '')) {
+        query.artist = (e.channel || e.uploader).replace(/ - Topic$/, '');
+      }
+      return { ...query, videoId: e.id };
+    }),
   };
 }
 
-module.exports = { extractPlaylistId, fetchPlaylistQueries };
+async function matchPlaylistTracks(queries, onProgress) {
+  const tracks = [];
+  for (let i = 0; i < queries.length; i++) {
+    const q = queries[i];
+    if (/^[a-zA-Z0-9_-]{11}$/.test(q.videoId || '') && q.title) {
+      const metadata = await musicbrainz.findRecording(q.artist, q.title);
+      if (metadata) tracks.push({ ...metadata, id: `youtube:${q.videoId}` });
+    }
+    if (onProgress) onProgress(i + 1, queries.length);
+  }
+  return { tracks, matched: tracks.length, total: queries.length };
+}
+
+module.exports = { extractPlaylistId, fetchPlaylistQueries, matchPlaylistTracks };

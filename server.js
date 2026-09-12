@@ -10,6 +10,7 @@ const store = require('./src/store');
 const deezer = require('./src/deezer');
 const spotify = require('./src/spotify');
 const youtube = require('./src/youtube');
+const { streamPreview } = require('./src/youtube-audio');
 const rooms = require('./src/rooms');
 const attachWebSocket = require('./src/ws');
 
@@ -162,10 +163,10 @@ async function runImport(playlistId, { source, url, pasteKind, pasteText }) {
       note = `${match.matched} von ${match.total} Songs auf Deezer gefunden${embed.truncated ? ' (nur die ersten 100 der Spotify-Playlist wurden gelesen — für mehr: Songs in Spotify markieren, kopieren und hier einfügen, oder als CSV exportieren)' : ''}`;
     } else if (source === 'youtube') {
       const yt = await youtube.fetchPlaylistQueries(url);
-      const match = await deezer.matchExternalTracks(yt.queries, setProgress);
+      const match = await youtube.matchPlaylistTracks(yt.queries, setProgress);
       tracks = match.tracks;
       defaultName = yt.name;
-      note = `${match.matched} von ${match.total} Videos als Song erkannt und auf Deezer gefunden${yt.truncated ? ' (nur die ersten 300 der YouTube-Playlist wurden gelesen)' : ''}`;
+      note = `${match.matched} von ${match.total} Videos auf MusicBrainz gefunden (Audio von YouTube)${yt.truncated ? ' (nur die ersten 300 der YouTube-Playlist wurden gelesen)' : ''}`;
     }
 
     if (!tracks || tracks.length === 0) {
@@ -234,9 +235,13 @@ app.post('/api/playlists', auth.requireAuth, async (req, res) => {
   runImport(playlist.id, { source, url, pasteKind, pasteText: url }).finally(() => importsInFlight.delete(sourceKey));
 });
 
-// Fresh, never-expiring-in-practice redirect to Deezer's signed preview URL —
-// fetched right when it's needed instead of baked in ahead of time.
-app.get('/api/track/:id/preview', async (req, res) => {
+// YouTube clips are streamed on demand; Deezer tracks use fresh signed previews.
+app.get('/api/track/:id/preview', auth.requireAuth, async (req, res) => {
+  if (req.params.id.startsWith('youtube:')) {
+    const known = store.listPlaylists().some((p) => p.tracks.some((t) => t.id === req.params.id));
+    if (!known) return res.status(404).send('Song nicht gefunden');
+    return streamPreview(req.params.id.slice(8), req, res);
+  }
   try {
     const url = await deezer.getFreshPreviewUrl(req.params.id);
     res.redirect(302, url);

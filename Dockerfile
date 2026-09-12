@@ -1,11 +1,10 @@
-FROM node:20-slim
+FROM node:22-slim
 
-# python3/pip for yt-dlp (used server-side to read YouTube playlist listings —
-# no video/audio is ever downloaded, just the flat playlist metadata).
+# yt-dlp reads YouTube playlists and streams audio; ffmpeg creates 30s MP3 clips.
 RUN apt-get update \
- && apt-get install -y --no-install-recommends python3 python3-pip ca-certificates \
+ && apt-get install -y --no-install-recommends python3 python3-pip ca-certificates ffmpeg \
  && rm -rf /var/lib/apt/lists/* \
- && pip3 install --no-cache-dir --break-system-packages yt-dlp
+ && pip3 install --no-cache-dir --break-system-packages 'yt-dlp[default]'
 
 WORKDIR /app
 

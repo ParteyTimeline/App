@@ -1,7 +1,7 @@
 {
   "name": "partey-timeline-server",
   "version": "1.0.0",
-  "description": "Selbst gehosteter Hitster/HitStar-Klon mit Login, Räumen (eigene Geräte pro Spieler) und einer wachsenden, fair gewichteten Playlist-Bibliothek.",
+  "description": "Selbst gehosteter Hitster/HitStar-Klon mit Login, R\u00e4umen (eigene Ger\u00e4te pro Spieler) und einer wachsenden, fair gewichteten Playlist-Bibliothek.",
   "private": true,
   "license": "MIT",
   "author": "the project contributors",
@@ -17,7 +17,8 @@
   },
   "scripts": {
     "start": "node server.js",
-    "dev": "node --watch server.js"
+    "dev": "node --watch server.js",
+    "test": "node --test"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",

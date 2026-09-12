@@ -15,11 +15,12 @@ const MB_API = 'https://musicbrainz.org/ws/2/recording/';
 const USER_AGENT = process.env.MUSICBRAINZ_USER_AGENT || 'ParteyTimeline/1.0 (no contact set - see .env.example)';
 const MIN_INTERVAL_MS = 1100; // MusicBrainz's anonymous-access limit is 1 req/s
 
-let lastRequestAt = 0;
+let nextRequestAt = 0;
 async function throttle() {
-  const wait = MIN_INTERVAL_MS - (Date.now() - lastRequestAt);
-  if (wait > 0) await new Promise((r) => setTimeout(r, wait));
-  lastRequestAt = Date.now();
+  const now = Date.now();
+  const slot = Math.max(now, nextRequestAt);
+  nextRequestAt = slot + MIN_INTERVAL_MS;
+  if (slot > now) await new Promise((r) => setTimeout(r, slot - now));
 }
 
 function extractYear(dateStr) {
@@ -39,7 +40,7 @@ async function getEarliestReleaseYear(artist, title, attempt = 0) {
   const url = `${MB_API}?query=${encodeURIComponent(query)}&fmt=json&limit=10`;
   try {
     await throttle();
-    const res = await fetch(url, { headers: { 'User-Agent': USER_AGENT, Accept: 'application/json' } });
+    const res = await fetch(url, { headers: { 'User-Agent': USER_AGENT, Accept: 'application/json' }, signal: AbortSignal.timeout(15000) });
     // 503 is MusicBrainz's "you're going too fast, back off" — transient,
     // not "this song has no data". Worth one retry; anything else (or a
     // repeat failure) just falls back to Deezer's own date.
@@ -59,4 +60,48 @@ async function getEarliestReleaseYear(artist, title, attempt = 0) {
   }
 }
 
-module.exports = { getEarliestReleaseYear };
+function normalized(value) {
+  return String(value || '').normalize('NFKD').replace(/\p{M}/gu, '')
+    .toLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
+}
+
+// A high search score alone is not proof of identity: also check title and
+// artist, and reject ambiguous title-only matches from different artists.
+async function findRecording(artist, title, attempt = 0) {
+  const query = `recording:"${escapeLucene(title)}"` +
+    (artist ? ` AND artist:"${escapeLucene(artist)}"` : '');
+  await throttle();
+  const res = await fetch(`${MB_API}?query=${encodeURIComponent(query)}&fmt=json&limit=25`, {
+    headers: { 'User-Agent': USER_AGENT, Accept: 'application/json' },
+    signal: AbortSignal.timeout(15000),
+  });
+  if ((res.status === 503 || res.status === 429) && attempt < 2) {
+    await new Promise((r) => setTimeout(r, 1500 * (attempt + 1)));
+    return findRecording(artist, title, attempt + 1);
+  }
+  if (!res.ok) throw new Error('MusicBrainz antwortete mit Status ' + res.status);
+  const json = await res.json();
+  const matches = (json.recordings || []).filter((r) => {
+    const credits = r['artist-credit'] || [];
+    const fullArtist = credits.map((c) => (c.name || c.artist?.name || '') + (c.joinphrase || '')).join('');
+    const year = extractYear(r['first-release-date']);
+    return Number(r.score) >= 90 && normalized(r.title) === normalized(title) &&
+      credits.length && year > 1900 && year <= new Date().getFullYear() &&
+      (!artist || normalized(fullArtist) === normalized(artist) ||
+        credits.some((c) => normalized(c.name || c.artist?.name) === normalized(artist)));
+  });
+  if (!artist && new Set(matches.map((r) =>
+    (r['artist-credit'] || []).map((c) => c.artist?.id || normalized(c.name)).join(','))).size > 1) return null;
+  matches.sort((a, b) => extractYear(a['first-release-date']) - extractYear(b['first-release-date']));
+  const r = matches[0];
+  if (!r) return null;
+  return {
+    musicbrainzId: r.id,
+    t: r.title,
+    a: r['artist-credit'].map((c) => (c.name || c.artist?.name || '') + (c.joinphrase || '')).join(''),
+    y: extractYear(r['first-release-date']),
+    cover: null,
+  };
+}
+
+module.exports = { getEarliestReleaseYear, findRecording };

@@ -1,4 +1,6 @@
 const musicbrainz = require('./musicbrainz');
+const youtube = require('./youtube');
+const { sameSong } = require('./song-match');
 
 const DEEZER_API = 'https://api.deezer.com';
 
@@ -23,7 +25,7 @@ async function resolveToPlaylistId(input) {
 }
 
 async function fetchJson(url, attempt = 0) {
-  const res = await fetch(url);
+  const res = await fetch(url, { signal: AbortSignal.timeout(15000) });
   if (res.status === 429 && attempt < 4) {
     await sleep(400 * (attempt + 1));
     return fetchJson(url, attempt + 1);
@@ -104,9 +106,9 @@ async function getFreshPreviewUrl(trackId) {
   return d.preview;
 }
 
-async function searchTrack(query) {
-  const json = await fetchJson(`${DEEZER_API}/search/track?q=${encodeURIComponent(query)}&limit=1`);
-  return (json.data && json.data[0]) || null;
+async function searchTracks(query) {
+  const json = await fetchJson(`${DEEZER_API}/search/track?q=${encodeURIComponent(query)}&limit=10`);
+  return json.data || [];
 }
 
 // Deezer's release_date is often a remaster/reissue/compilation date, not
@@ -130,29 +132,32 @@ async function toGameTrack(d) {
   };
 }
 
-// Spotify/YouTube playlists don't carry a canonical release year (and their
-// own preview streams are a separate can of worms) — so every song coming
-// from those sources gets matched onto its Deezer counterpart by search,
-// then goes through the exact same pipeline as a native Deezer playlist.
-// queries: [{ artist, title }]. Returns { tracks, matched, total }.
+// Try alternate catalog editions before searching YouTube. Candidate details
+// are checked again because search and detail responses can disagree.
 async function matchExternalTracks(queries, onProgress) {
   const results = await mapLimit(queries, 2, 200, async (q) => {
     const title = (q.title || '').trim();
-    if (!title) return null;
-    const query = q.artist ? `${q.artist} ${title}` : title;
-    let hit;
-    try {
-      hit = await searchTrack(query);
-    } catch (e) {
-      return null;
+    if (!title || !q.artist) return null;
+    let hits = [];
+    try { hits = await searchTracks(`${q.artist} ${title}`); } catch (e) { /* Try the fallback. */ }
+    const seen = new Set();
+    for (const hit of hits) {
+      const candidateTitle = hit.title || hit.title_short;
+      if (seen.has(hit.id) || !sameSong(q, candidateTitle, [hit.artist?.name])) continue;
+      seen.add(hit.id);
+      const d = await fetchTrackDetail(hit.id);
+      if (!d || !d.preview || !sameSong(q, d.title || d.title_short,
+        [d.artist?.name, ...(d.contributors || []).map((a) => a.name)])) continue;
+      const year = Number(String(d.release_date || '').slice(0, 4));
+      if (!Number.isInteger(year) || year <= 1900 || year > new Date().getFullYear()) continue;
+      return toGameTrack(d);
     }
-    if (!hit) return null;
-    const d = await fetchTrackDetail(hit.id);
-    if (!d || !d.preview || !d.release_date) return null;
-    return await toGameTrack(d);
+    try { return await youtube.findSongPreview(q); } catch (e) { return null; }
   }, onProgress);
   const tracks = results.filter(Boolean);
-  return { tracks, matched: tracks.length, total: queries.length };
+  const youtubeCount = tracks.filter((t) => String(t.id).startsWith('youtube:')).length;
+  return { tracks, matched: tracks.length, total: queries.length,
+    deezer: tracks.length - youtubeCount, youtube: youtubeCount };
 }
 
 module.exports = {

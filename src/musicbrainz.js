@@ -71,7 +71,7 @@ async function findRecording(artist, title, attempt = 0) {
   const query = `recording:"${escapeLucene(title)}"` +
     (artist ? ` AND artist:"${escapeLucene(artist)}"` : '');
   await throttle();
-  const res = await fetch(`${MB_API}?query=${encodeURIComponent(query)}&fmt=json&limit=25`, {
+  const res = await fetch(`${MB_API}?query=${encodeURIComponent(query)}&fmt=json&limit=100`, {
     headers: { 'User-Agent': USER_AGENT, Accept: 'application/json' },
     signal: AbortSignal.timeout(15000),
   });

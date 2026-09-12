@@ -14,8 +14,11 @@ Songs kommt nicht öfter dran als eine mit 15 — wer mehr Songs beisteuert, hat
 - **Deezer**: nativ, volle Metadaten (Erscheinungsjahr, Cover, 30s-Vorschau) direkt von der
   öffentlichen Deezer-API.
 - **Spotify**: liest öffentliche Playlisten vollständig und seitenweise über SpotAPI, ohne
-  Spotify-Login oder eigenen API-Client. Titel und Interpret werden anschließend auf Deezer
-  gesucht. Ist SpotAPI nicht verfügbar, wird die öffentliche Embed-Seite verwendet; diese
+  Spotify-Login oder eigenen API-Client. Titel und Interpret werden anschließend unter bis zu zehn Deezer-Treffern
+  abgeglichen; passende alternative Veröffentlichungen werden auf Vorschauen geprüft.
+  Ohne geeignete Deezer-Vorschau sucht die App nach einem MusicBrainz-Treffer mit Jahr
+  und einem passenden YouTube-Video für den 30-Sekunden-Clip. Der Importhinweis zählt
+  Deezer- und YouTube-Songs getrennt. Dies gilt auch für Spotify-Track-Links und CSV. Ist SpotAPI nicht verfügbar, wird die öffentliche Embed-Seite verwendet; diese
   liefert höchstens 100 Songs und der Importhinweis nennt den Fallback ausdrücklich.
   Alternativ können weiterhin Spotify-Track-Links oder Exportify-CSV eingefügt werden.
 - **YouTube**: liest bis zu 300 Videos über `yt-dlp`. Titel und Interpret werden aus den

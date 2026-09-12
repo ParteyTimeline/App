@@ -1,5 +1,6 @@
 const { execFile } = require('child_process');
 const musicbrainz = require('./musicbrainz');
+const { sameSong } = require('./song-match');
 
 function extractPlaylistId(url) {
   const m = String(url).match(/[?&]list=([a-zA-Z0-9_-]+)/);
@@ -90,4 +91,31 @@ async function matchPlaylistTracks(queries, onProgress) {
   return { tracks, matched: tracks.length, total: queries.length };
 }
 
-module.exports = { extractPlaylistId, fetchPlaylistQueries, matchPlaylistTracks };
+function selectSongVideo(entries, query) {
+  return entries.find((e) => {
+    if (!/^[a-zA-Z0-9_-]{11}$/.test(e.id || '') || e.is_live || e.duration > 900) return false;
+    const parsed = splitArtistTitle(cleanVideoTitle(e.title));
+    const artist = e.artist || parsed.artist ||
+      (/ - Topic$/.test(e.channel || e.uploader || '')
+        ? (e.channel || e.uploader).replace(/ - Topic$/, '') : '');
+    return sameSong(query, e.track || parsed.title, [artist]);
+  }) || null;
+}
+
+async function findSongPreview(query) {
+  // Metadata must be identified independently of the YouTube search ranking.
+  const metadata = await musicbrainz.findRecording(query.artist, query.title);
+  if (!metadata) return null;
+  const entries = await new Promise((resolve, reject) => {
+    execFile('yt-dlp', ['--ignore-config', '--flat-playlist', '-J', '--no-warnings',
+      '--socket-timeout', '15', '--retries', '1', '--', `ytsearch5:${metadata.a} ${metadata.t}`],
+    { timeout: 60000, maxBuffer: 4 * 1024 * 1024 }, (error, stdout) => {
+      if (error) return reject(error);
+      try { resolve(JSON.parse(stdout).entries || []); } catch (e) { reject(e); }
+    });
+  });
+  const video = selectSongVideo(entries, { artist: metadata.a, title: metadata.t });
+  return video ? { ...metadata, id: `youtube:${video.id}` } : null;
+}
+
+module.exports = { extractPlaylistId, fetchPlaylistQueries, matchPlaylistTracks, findSongPreview, selectSongVideo };

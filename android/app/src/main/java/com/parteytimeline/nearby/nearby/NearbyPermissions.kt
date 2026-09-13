@@ -8,13 +8,16 @@ import androidx.core.content.ContextCompat
 
 /**
  * Nearby Connections needs different runtime permissions depending on the
- * OS version (Android 12 replaced location-based BLE/Wi-Fi scanning
- * permissions with dedicated Bluetooth/Wi-Fi ones; Android 13 added
- * NEARBY_WIFI_DEVICES). Ported from Google's own reference implementation
- * (android/connectivity-samples, NearbyConnectionsWalkieTalkie's
- * ConnectionsActivity.REQUIRED_PERMISSIONS) rather than guessed, since
- * getting this list wrong per-API-level is easy and silently breaks
- * discovery/advertising on some devices only.
+ * OS version. This list must match AndroidManifest.xml's <uses-permission>
+ * minSdkVersion/maxSdkVersion gates EXACTLY, permission by permission: a
+ * permission the manifest doesn't grant on the device's API level can never
+ * be obtained no matter how many times the user taps "allow" — the runtime
+ * dialog either won't show it at all or silently reports it denied, which
+ * makes `hasAll()` return false forever and the whole "tap button ->
+ * request permissions -> nothing happens" flow loop indefinitely. (This
+ * happened for real: an earlier version requested ACCESS_WIFI_STATE/
+ * CHANGE_WIFI_STATE on API 32+, but the manifest — copied from a different,
+ * equally official Google source — only declares those up to API 31.)
  */
 object NearbyPermissions {
 
@@ -23,17 +26,28 @@ object NearbyPermissions {
             Manifest.permission.BLUETOOTH_SCAN,
             Manifest.permission.BLUETOOTH_ADVERTISE,
             Manifest.permission.BLUETOOTH_CONNECT,
-            Manifest.permission.ACCESS_WIFI_STATE,
-            Manifest.permission.CHANGE_WIFI_STATE,
             Manifest.permission.NEARBY_WIFI_DEVICES,
+            Manifest.permission.POST_NOTIFICATIONS, // needed to show the host's foreground-service notification
         )
-        Build.VERSION.SDK_INT >= 31 -> arrayOf(
+        Build.VERSION.SDK_INT == 32 -> arrayOf(
             Manifest.permission.BLUETOOTH_SCAN,
             Manifest.permission.BLUETOOTH_ADVERTISE,
             Manifest.permission.BLUETOOTH_CONNECT,
+            Manifest.permission.NEARBY_WIFI_DEVICES,
+        )
+        Build.VERSION.SDK_INT == 31 -> arrayOf(
+            Manifest.permission.BLUETOOTH_SCAN,
+            Manifest.permission.BLUETOOTH_ADVERTISE,
+            Manifest.permission.BLUETOOTH_CONNECT,
+            Manifest.permission.ACCESS_FINE_LOCATION,
             Manifest.permission.ACCESS_WIFI_STATE,
             Manifest.permission.CHANGE_WIFI_STATE,
-            Manifest.permission.ACCESS_COARSE_LOCATION,
+        )
+        Build.VERSION.SDK_INT >= 29 -> arrayOf(
+            Manifest.permission.BLUETOOTH,
+            Manifest.permission.BLUETOOTH_ADMIN,
+            Manifest.permission.ACCESS_WIFI_STATE,
+            Manifest.permission.CHANGE_WIFI_STATE,
             Manifest.permission.ACCESS_FINE_LOCATION,
         )
         else -> arrayOf(
@@ -42,7 +56,6 @@ object NearbyPermissions {
             Manifest.permission.ACCESS_WIFI_STATE,
             Manifest.permission.CHANGE_WIFI_STATE,
             Manifest.permission.ACCESS_COARSE_LOCATION,
-            Manifest.permission.ACCESS_FINE_LOCATION,
         )
     }
 

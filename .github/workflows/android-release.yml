@@ -1,0 +1,71 @@
+name: Android release
+
+# Fires on a pushed android-v* tag (see `git tag android-vX.Y.Z && git push
+# origin android-vX.Y.Z`) and on manual dispatch for a one-off rebuild of an
+# existing tag. Produces the same signed release APK this project's earlier
+# manual (podman-based) build did, then attaches it to that tag's GitHub
+# Release — the artifact IzzyOnDroid's update-checker watches for.
+on:
+  push:
+    tags:
+      - 'android-v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing android-v* tag to rebuild and re-release'
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      # NDK/CMake versions pinned to match android/app/build.gradle.kts
+      # exactly (compileSdk/build-tools come from the preinstalled SDK on
+      # GitHub's runner image; only these two need an explicit install).
+      - name: Install NDK and CMake
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;26.1.10909125" "cmake;3.22.1"
+
+      - name: Fetch libnode (prebuilt nodejs-mobile runtime)
+        run: bash scripts/fetch-libnode.sh
+
+      - name: Decode release keystore
+        working-directory: android
+        run: |
+          mkdir -p keystore
+          echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 -d > keystore/release.jks
+          cat > app/signing.properties <<EOF
+          storeFile=../keystore/release.jks
+          storePassword=${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          keyAlias=${{ secrets.ANDROID_KEY_ALIAS }}
+          keyPassword=${{ secrets.ANDROID_KEY_PASSWORD }}
+          EOF
+
+      - name: Build signed release APK
+        working-directory: android
+        run: ./gradlew assembleRelease --no-daemon
+
+      - name: Clean up signing material
+        if: always()
+        working-directory: android
+        run: rm -rf keystore app/signing.properties
+
+      - name: Attach APK to the release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
+          files: android/app/build/outputs/apk/release/app-release.apk
+          fail_on_unmatched_files: true

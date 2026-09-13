@@ -182,6 +182,18 @@ function findRoomForUser(username) {
   return best;
 }
 
+// For Nearby/local play, where there are no accounts and no room codes to
+// type: at most one room is ever active on a given host device at a time,
+// so "the room a new arrival should join" just means whichever one was
+// created most recently (see /api/local/join in server.js).
+function mostRecentRoom() {
+  let best = null;
+  for (const room of rooms.values()) {
+    if (!best || room.createdAt > best.createdAt) best = room;
+  }
+  return best;
+}
+
 function findPlayerTeam(room, username) {
   return room.teams.find((t) => t.members.includes(username));
 }
@@ -709,6 +721,7 @@ module.exports = {
   createRoom,
   getRoom,
   findRoomForUser,
+  mostRecentRoom,
   addPlayer,
   switchTeam,
   setPlayerPlaylists,

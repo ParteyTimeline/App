@@ -22,6 +22,14 @@ const STRINGS = {
     'auth.submitLogin': '▶ Einloggen',
     'auth.submitRegister': '▶ Account erstellen',
 
+    'local.title': 'Wie heißt du?',
+    'local.leadHost': 'Kein Account nötig — der Name ist nur für diese Runde auf diesem Handy.',
+    'local.leadGuest': 'Kein Account nötig — sobald du beitrittst, landest du automatisch in der Runde des Gastgebers.',
+    'local.namePlaceholder': 'Dein Name',
+    'local.submit': '▶ Weiter',
+    'local.waitingTitle': 'Warte auf den Gastgeber …',
+    'local.waitingLead': 'Sobald der Gastgeber ein Spiel startet, geht es hier automatisch weiter.',
+
     'playlist.empty': 'Noch keine Playlist in der Bibliothek — füg unten die erste hinzu.',
     'playlist.starting': 'startet …',
     'playlist.failedPrefix': 'Fehlgeschlagen: ',
@@ -55,6 +63,8 @@ const STRINGS = {
     'apiErr.game_already_started': 'Das Spiel läuft schon',
     'apiErr.room_full': 'Raum ist voll',
     'apiErr.join_failed': 'Beitritt fehlgeschlagen',
+    'apiErr.name_required': 'Name fehlt',
+    'apiErr.name_taken': 'Name ist schon vergeben — auf einem anderen Handy. Wähl einen anderen.',
 
     'lobby.createTitle': 'Neuen Raum erstellen',
     'lobby.createLead': 'Playlisten wählt jede:r Mitspieler:in gleich im Warteraum selbst — Songs werden <strong>pro Spieler:in gleich gewichtet</strong> gezogen, nicht pro Playlist. Wer drei Playlisten beisteuert, hat dadurch keinen Vorteil gegenüber wer nur eine hat.',
@@ -91,6 +101,7 @@ const STRINGS = {
     'room.switchHere': 'Hierher wechseln',
     'room.waitingTitle': 'Warteraum',
     'room.waitingLead': 'Raumcode teilen, alle geben ihn unter „Raum beitreten" ein.',
+    'room.waitingLeadLocal': 'Alle in der Nähe sind automatisch beigetreten — kein Code nötig.',
     'room.targetInfo': 'Ziel: {target} Karten · Songs werden gleich gewichtet pro Spieler:in gezogen',
     'room.startGame': '▶ Spiel starten',
     'room.needTwoTeams': 'Mindestens 2 Teams brauchen je 1 Spieler',
@@ -178,6 +189,14 @@ const STRINGS = {
     'auth.submitLogin': '▶ Log in',
     'auth.submitRegister': '▶ Create account',
 
+    'local.title': "What's your name?",
+    'local.leadHost': 'No account needed — this name is just for this round, on this phone.',
+    'local.leadGuest': 'No account needed — you\'ll drop straight into the host\'s game once you join.',
+    'local.namePlaceholder': 'Your name',
+    'local.submit': '▶ Continue',
+    'local.waitingTitle': 'Waiting for the host …',
+    'local.waitingLead': 'This will move on by itself as soon as the host starts a game.',
+
     'playlist.empty': 'No playlist in the library yet — add the first one below.',
     'playlist.starting': 'starting …',
     'playlist.failedPrefix': 'Failed: ',
@@ -211,6 +230,8 @@ const STRINGS = {
     'apiErr.game_already_started': 'The game has already started',
     'apiErr.room_full': 'Room is full',
     'apiErr.join_failed': 'Failed to join',
+    'apiErr.name_required': 'Name is missing',
+    'apiErr.name_taken': 'That name is already taken on another phone — pick a different one.',
 
     'lobby.createTitle': 'Create new room',
     'lobby.createLead': 'Everyone picks their own playlists right in the waiting room — songs are drawn <strong>weighted equally per player</strong>, not per playlist. Contributing three playlists gives you no edge over someone with just one.',
@@ -247,6 +268,7 @@ const STRINGS = {
     'room.switchHere': 'Switch here',
     'room.waitingTitle': 'Waiting room',
     'room.waitingLead': 'Share the room code — everyone enters it under "Join room".',
+    'room.waitingLeadLocal': 'Everyone nearby joined automatically — no code needed.',
     'room.targetInfo': 'Target: {target} cards · songs are drawn weighted equally per player',
     'room.startGame': '▶ Start game',
     'room.needTwoTeams': 'At least 2 teams need 1 player each',

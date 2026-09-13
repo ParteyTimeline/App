@@ -10,6 +10,7 @@ import android.webkit.WebViewClient
 import androidx.appcompat.app.AppCompatActivity
 
 private const val EXTRA_PORT = "port"
+private const val EXTRA_ROLE = "role"
 private const val MAX_RETRIES = 20
 private const val RETRY_DELAY_MS = 500L
 
@@ -19,8 +20,11 @@ private const val RETRY_DELAY_MS = 500L
  * or the local tunnel entry point (peer, see PeerTunnelClient's bound
  * port). public/app.js already builds its WebSocket URL and fetch() paths
  * relative to location.host/location.pathname (see app.js), so pointing
- * the WebView at the right origin is the entire integration — no app.js
- * changes needed.
+ * the WebView at the right origin is almost the entire integration — the
+ * only addition is `?local=1&role=...`, which tells app.js to skip the
+ * account system and room codes entirely (there's no one else this
+ * embedded server could belong to) and either create or auto-join the
+ * one game this device is part of.
  */
 class GameWebViewActivity : AppCompatActivity() {
     private val retryHandler = Handler(Looper.getMainLooper())
@@ -32,7 +36,8 @@ class GameWebViewActivity : AppCompatActivity() {
 
         val port = intent.getIntExtra(EXTRA_PORT, -1)
         require(port > 0) { "GameWebViewActivity requires EXTRA_PORT" }
-        val url = "http://127.0.0.1:$port/"
+        val role = intent.getStringExtra(EXTRA_ROLE) ?: "host"
+        val url = "http://127.0.0.1:$port/?local=1&role=$role"
 
         val webView = findViewById<WebView>(R.id.webView)
         webView.settings.javaScriptEnabled = true
@@ -56,7 +61,7 @@ class GameWebViewActivity : AppCompatActivity() {
     }
 
     companion object {
-        fun putPort(intent: android.content.Intent, port: Int): android.content.Intent =
-            intent.putExtra(EXTRA_PORT, port)
+        fun putPort(intent: android.content.Intent, port: Int, role: String = "host"): android.content.Intent =
+            intent.putExtra(EXTRA_PORT, port).putExtra(EXTRA_ROLE, role)
     }
 }

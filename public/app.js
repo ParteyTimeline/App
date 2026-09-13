@@ -5,8 +5,17 @@
 // relative to wherever this page itself was actually loaded from.
 const BASE = location.pathname.endsWith('/') ? location.pathname : location.pathname + '/';
 
+// Set by the Android app on every URL it loads this page at — both the
+// host's own view (?local=1&role=host) and a Nearby peer's tunnel view or
+// the LAN/QR link handed to another device (?local=1&role=guest). Nothing
+// else ever adds this param, so its absence means "real self-hosted/online
+// use", which keeps the account system (see auth.* below).
+const LOCAL_PARAMS = new URLSearchParams(location.search);
+const LOCAL_MODE = LOCAL_PARAMS.has('local');
+const LOCAL_ROLE = LOCAL_PARAMS.get('role'); // 'host' | 'guest' | null
+
 let ME = null;
-let VIEW = 'loading'; // loading | auth | lobby | room
+let VIEW = 'loading'; // loading | auth | localName | lobby | room
 let PLAYLISTS = [];
 let TARGET = 8;
 let TEAM_COUNT = 3;
@@ -242,11 +251,63 @@ async function boot() {
       const mine = await api('GET', 'api/my-room');
       if (mine && mine.code) { connectRoom(mine.code); resumed = true; }
     } catch (e) { /* no active room — fall through to the lobby */ }
-    if (!resumed) VIEW = 'lobby';
+    if (!resumed) {
+      VIEW = 'lobby';
+      // A guest with no room to resume into (e.g. just came back from a
+      // finished game's "back to lobby") waits here for the host to start
+      // the next one — see startLocalGuestPoll().
+      if (LOCAL_MODE && LOCAL_ROLE === 'guest') startLocalGuestPoll();
+    }
   } catch (e) {
-    VIEW = 'auth';
+    VIEW = LOCAL_MODE ? 'localName' : 'auth';
   }
   render();
+}
+
+// ---------------- local (no-account) play ----------------
+
+async function enterLocalName(name) {
+  LOBBY_ERROR = '';
+  name = (name || '').trim();
+  if (!name) return;
+  try {
+    const res = await api('POST', 'api/local/join', { name });
+    ME = { username: res.username };
+    await loadPlaylists();
+    if (res.code) {
+      connectRoom(res.code);
+    } else {
+      VIEW = 'lobby';
+      if (LOCAL_ROLE === 'guest') startLocalGuestPoll();
+    }
+  } catch (e) {
+    LOBBY_ERROR = apiErrorMessage(e);
+  }
+  render();
+}
+
+let localGuestPollTimer = null;
+
+function stopLocalGuestPoll() {
+  clearTimeout(localGuestPollTimer);
+  localGuestPollTimer = null;
+}
+
+// A local guest who isn't currently in a room (never joined one yet, or
+// just left a finished game) has no code to type — instead, poll quietly
+// for whatever room this host is currently running and hop straight in
+// the moment one exists. Stops itself as soon as VIEW leaves 'lobby'.
+function startLocalGuestPoll() {
+  stopLocalGuestPoll();
+  const tick = async () => {
+    if (VIEW !== 'lobby') return;
+    try {
+      const res = await api('POST', 'api/local/join', { name: ME.username });
+      if (res.code) { connectRoom(res.code); return; }
+    } catch (e) { /* no active room yet, or it's mid-game — keep waiting */ }
+    localGuestPollTimer = setTimeout(tick, 2000);
+  };
+  tick();
 }
 
 let playlistPollTimer = null;
@@ -289,9 +350,10 @@ async function doAuth(mode, username, password) {
 }
 
 async function doLogout() {
+  stopLocalGuestPoll();
   try { await api('POST', 'api/logout'); } catch (e) {}
   disconnectWs();
-  ME = null; VIEW = 'auth'; ROOM_STATE = null; currentRoomCode = null;
+  ME = null; VIEW = LOCAL_MODE ? 'localName' : 'auth'; ROOM_STATE = null; currentRoomCode = null;
   render();
 }
 
@@ -342,12 +404,16 @@ function leaveRoom() {
   disconnectWs();
   ROOM_STATE = null; currentRoomCode = null; VIEW = 'lobby';
   loadPlaylists().then(render);
+  // The host starting a fresh round next needs its local guests to hop
+  // back in without anyone retyping a code — see startLocalGuestPoll().
+  if (LOCAL_MODE && LOCAL_ROLE === 'guest') startLocalGuestPoll();
   render();
 }
 
 // ---------------- websocket / room ----------------
 
 function connectRoom(code) {
+  stopLocalGuestPoll();
   currentRoomCode = code;
   myPlaylistsInitialized = false;
   audioHostReclaimSent = false;
@@ -426,6 +492,7 @@ function render() {
   const app = document.getElementById('app');
   if (VIEW === 'loading') app.innerHTML = '';
   else if (VIEW === 'auth') app.innerHTML = renderAuth();
+  else if (VIEW === 'localName') app.innerHTML = renderLocalName();
   else if (VIEW === 'lobby') app.innerHTML = renderLobby();
   else if (VIEW === 'room') app.innerHTML = renderRoom();
   bindEvents();
@@ -470,6 +537,24 @@ function renderAuth() {
           <input type="password" name="password" autocomplete="${AUTH_MODE === 'login' ? 'current-password' : 'new-password'}" required minlength="6">
         </div>
         <button class="btn primary block" type="submit">${AUTH_MODE === 'login' ? t('auth.submitLogin') : t('auth.submitRegister')}</button>
+      </form>
+    </div>
+  </div>`;
+}
+
+function renderLocalName() {
+  return `
+  <div class="auth-wrap">
+    ${renderHeader()}
+    <div class="card">
+      <h2>${t('local.title')}</h2>
+      <p class="lead">${t(LOCAL_ROLE === 'guest' ? 'local.leadGuest' : 'local.leadHost')}</p>
+      ${LOBBY_ERROR ? `<div class="error-msg">${esc(LOBBY_ERROR)}</div>` : ''}
+      <form data-form="localname">
+        <div class="field">
+          <input type="text" name="name" autocomplete="off" required maxlength="20" placeholder="${esc(t('local.namePlaceholder'))}">
+        </div>
+        <button class="btn primary block" type="submit">${t('local.submit')}</button>
       </form>
     </div>
   </div>`;
@@ -542,6 +627,18 @@ function renderCacheStatus(p) {
 }
 
 function renderLobby() {
+  // A local guest never creates or types a code — they're just waiting for
+  // the host to (re)start a game; startLocalGuestPoll() picks it up the
+  // moment one exists.
+  if (LOCAL_MODE && LOCAL_ROLE === 'guest') {
+    return `
+    ${renderHeader()}
+    <div class="card" style="text-align:center;">
+      <h2>${t('local.waitingTitle')}</h2>
+      <p class="lead">${t('local.waitingLead')}</p>
+    </div>`;
+  }
+
   const plHtml = renderPlaylistList(null);
 
   const targets = [6, 8, 10, 12];
@@ -613,6 +710,7 @@ function renderLobby() {
       </form>
     </div>
 
+    ${LOCAL_MODE ? '' : `
     <div class="card">
       <h2>${t('lobby.joinTitle')}</h2>
       <p class="lead">${t('lobby.joinLead')}</p>
@@ -622,7 +720,7 @@ function renderLobby() {
           <button class="btn primary" type="submit">${t('lobby.joinButton')}</button>
         </div>
       </form>
-    </div>
+    </div>`}
   </div>
   <footer class="credit">${t('lobby.footer')}</footer>`;
 }
@@ -666,8 +764,8 @@ function renderRoomLobby(s) {
   ${wsErrorMsg ? `<div class="error-msg">${esc(wsErrorMsg)}</div>` : ''}
   <div class="card" style="text-align:center;">
     <h2>${t('room.waitingTitle')}</h2>
-    <p class="lead" style="margin-left:auto;margin-right:auto;">${t('room.waitingLead')}</p>
-    <div class="room-code">${esc(s.code)}</div>
+    <p class="lead" style="margin-left:auto;margin-right:auto;">${t(LOCAL_MODE ? 'room.waitingLeadLocal' : 'room.waitingLead')}</p>
+    ${LOCAL_MODE ? '' : `<div class="room-code">${esc(s.code)}</div>`}
     <p class="hint-msg">${t('room.targetInfo', { target: s.target })}</p>
     <div class="team-grid">${teamCards}</div>
     <div style="margin-bottom:18px;">${renderAudioControl(s)}</div>
@@ -1035,6 +1133,12 @@ function bindEvents() {
     e.preventDefault();
     const fd = new FormData(authForm);
     doAuth(AUTH_MODE, fd.get('username'), fd.get('password'));
+  };
+
+  const localNameForm = app.querySelector('[data-form="localname"]');
+  if (localNameForm) localNameForm.onsubmit = (e) => {
+    e.preventDefault();
+    enterLocalName(new FormData(localNameForm).get('name'));
   };
 
   const createForm = app.querySelector('[data-form="createroom"]');

@@ -64,7 +64,7 @@ class MainActivity : AppCompatActivity() {
         findViewById<Button>(R.id.btnHost).setOnClickListener { withPermissions { startHosting() } }
         findViewById<Button>(R.id.btnJoin).setOnClickListener { withPermissions { startJoining() } }
         findViewById<Button>(R.id.btnContinueToGame).setOnClickListener {
-            startActivity(GameWebViewActivity.putPort(Intent(this, GameWebViewActivity::class.java), HOST_PORT))
+            startActivity(GameWebViewActivity.putPort(Intent(this, GameWebViewActivity::class.java), HOST_PORT, role = "host"))
         }
 
         findViewById<Button>(R.id.btnLangDe).setOnClickListener { setAppLanguage("de") }
@@ -113,7 +113,12 @@ class MainActivity : AppCompatActivity() {
 
         val lanIp = LanShareInfo.currentLanIp()
         if (lanIp != null) {
-            val url = "http://$lanIp:$HOST_PORT/"
+            // Same no-account, no-code local flow as the Nearby tunnel path
+            // below (see GameWebViewActivity) — this URL is meant for
+            // someone else's phone/laptop browser on the same Wi-Fi (e.g.
+            // an iPhone that can't use Nearby/Bluetooth pairing), not a
+            // return to normal self-hosted/online use.
+            val url = "http://$lanIp:$HOST_PORT/?local=1&role=guest"
             tvLanUrl.text = url
             ivQr.setImageBitmap(LanShareInfo.qrCodeBitmap(url))
             lanCard.visibility = android.view.View.VISIBLE
@@ -161,7 +166,7 @@ class MainActivity : AppCompatActivity() {
         }
         peer.onTunnelReady = { localPort ->
             runOnUiThread {
-                startActivity(GameWebViewActivity.putPort(Intent(this, GameWebViewActivity::class.java), localPort))
+                startActivity(GameWebViewActivity.putPort(Intent(this, GameWebViewActivity::class.java), localPort, role = "guest"))
             }
         }
         peer.startDiscovery()

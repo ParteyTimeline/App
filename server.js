@@ -400,6 +400,52 @@ app.post('/api/rooms/:code/join', auth.requireAuth, (req, res) => {
   res.json({ code: room.code });
 });
 
+// ---------- local (no-account) play ----------
+//
+// For Nearby/LAN play there are no accounts and no room code to type: a
+// device just picks a display name and is dropped into whichever room
+// this host is currently running (see rooms.mostRecentRoom()). The
+// session cookie IS the identity here — once a name is claimed, only
+// requests carrying that same cookie can act as it, so a second device
+// can't hijack someone else's name, and the original device transparently
+// resumes under it (including into a room the host starts *after* this
+// one, e.g. the next round) without retyping anything.
+app.post('/api/local/join', (req, res) => {
+  const room = rooms.mostRecentRoom();
+
+  if (req.session.user) {
+    if (!room) return res.json({ username: req.session.user, code: null });
+    const already = room.teams.some((t) => t.members.includes(req.session.user));
+    if (!already) {
+      if (room.phase !== 'lobby') {
+        return res.status(400).json({ error: 'Das Spiel läuft schon', code: 'game_already_started' });
+      }
+      rooms.addPlayer(room, req.session.user);
+      rooms.broadcast(room);
+    }
+    return res.json({ username: req.session.user, code: room.code });
+  }
+
+  const name = String((req.body || {}).name || '').trim().slice(0, 20);
+  if (!name) return res.status(400).json({ error: 'Name fehlt', code: 'name_required' });
+
+  if (room) {
+    if (room.teams.some((t) => t.members.includes(name))) {
+      return res.status(400).json({ error: 'Name ist schon vergeben', code: 'name_taken' });
+    }
+    if (room.phase !== 'lobby') {
+      return res.status(400).json({ error: 'Das Spiel läuft schon', code: 'game_already_started' });
+    }
+  }
+
+  req.session.user = name;
+  if (room) {
+    rooms.addPlayer(room, name);
+    rooms.broadcast(room);
+  }
+  res.json({ username: name, code: room ? room.code : null });
+});
+
 app.get('/api/rooms/:code', auth.requireAuth, (req, res) => {
   const room = rooms.getRoom(req.params.code);
   if (!room) return res.status(404).json({ error: 'Raum nicht gefunden', code: 'room_not_found' });

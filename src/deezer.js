@@ -126,7 +126,7 @@ async function toGameTrack(d) {
   const mbYear = await musicbrainz.getEarliestReleaseYear(artist, title);
   if (mbYear && mbYear < y) y = mbYear;
   return {
-    id: d.id,
+    id: String(d.id),
     t: title,
     a: artist,
     y,
@@ -141,26 +141,39 @@ function validYear(date) {
   return Number.isInteger(year) && year > 1900 && year <= new Date().getFullYear();
 }
 
+// Searches Deezer's own catalog for a matching, playable, plausibly-dated
+// recording of (q.title, q.artist) — one step of matchSong's cascade, but
+// also reused standalone by server.js's offline-cache prefetch to retry a
+// different service when a track's original source has since lost its
+// preview (previews get swapped out, region-locked, or removed over time).
+async function matchViaSearch(q) {
+  const title = (q.title || '').trim();
+  if (!title || !q.artist) return null;
+  let hits = [];
+  try { hits = await searchTracks(`${q.artist} ${title}`); } catch (e) { return null; }
+  const seen = new Set();
+  for (const hit of hits) {
+    const candidateTitle = hit.title || hit.title_short;
+    if (seen.has(hit.id) || !sameSong(q, candidateTitle, [hit.artist?.name])) continue;
+    seen.add(hit.id);
+    const d = await fetchTrackDetail(hit.id);
+    if (!d || !d.preview || !sameSong(q, d.title || d.title_short,
+      [d.artist?.name, ...(d.contributors || []).map((a) => a.name)])) continue;
+    const year = Number(String(d.release_date || '').slice(0, 4));
+    if (!Number.isInteger(year) || year <= 1900 || year > new Date().getFullYear()) continue;
+    return toGameTrack(d);
+  }
+  return null;
+}
+
 async function matchSong(q) {
     const title = (q.title || '').trim();
     if (!title || !q.artist) return null;
     if (q.spotifyId) {
       try { const track = await spotify.findSongPreview(q); if (track) return track; } catch (e) { /* Try Deezer. */ }
     }
-    let hits = [];
-    try { hits = await searchTracks(`${q.artist} ${title}`); } catch (e) { /* Try the fallback. */ }
-    const seen = new Set();
-    for (const hit of hits) {
-      const candidateTitle = hit.title || hit.title_short;
-      if (seen.has(hit.id) || !sameSong(q, candidateTitle, [hit.artist?.name])) continue;
-      seen.add(hit.id);
-      const d = await fetchTrackDetail(hit.id);
-      if (!d || !d.preview || !sameSong(q, d.title || d.title_short,
-        [d.artist?.name, ...(d.contributors || []).map((a) => a.name)])) continue;
-      const year = Number(String(d.release_date || '').slice(0, 4));
-      if (!Number.isInteger(year) || year <= 1900 || year > new Date().getFullYear()) continue;
-      return toGameTrack(d);
-    }
+    const viaDeezer = await matchViaSearch(q);
+    if (viaDeezer) return viaDeezer;
     try { const track = await spotify.findSongPreview(q, { search: true }); if (track) return track; } catch (e) { /* YouTube is last. */ }
     try { return await youtube.findSongPreview(q); } catch (e) { return null; }
 }
@@ -175,6 +188,7 @@ async function matchExternalTracks(queries, onProgress) {
 }
 
 module.exports = {
+  matchViaSearch,
   resolveToPlaylistId,
   fetchPlaylistMeta,
   buildPlaylistTracks,

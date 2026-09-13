@@ -26,7 +26,7 @@ test('skips unrelated first result and recovers another matching release', async
   });
   youtube.findSongPreview = async () => { throw new Error('fallback should not run'); };
   const result = await deezer.matchExternalTracks([q]);
-  assert.equal(result.tracks[0].id, 3);
+  assert.equal(result.tracks[0].id, '3');
   assert.equal(result.deezer, 1);
   assert.equal(result.youtube, 0);
   assert.ok(!requested.some((u) => u.endsWith('/track/1')));
@@ -35,7 +35,7 @@ test('tries another edition when the first has no preview', async () => {
   setup([hit(1), hit(2)], { 1: { ...hit(1), release_date: '1990-01-01' },
     2: { ...hit(2), release_date: '1990-01-01', preview: 'url' } });
   const result = await deezer.matchExternalTracks([q]);
-  assert.equal(result.tracks[0].id, 2);
+  assert.equal(result.tracks[0].id, '2');
 });
 test('uses YouTube fallback and counts its source', async () => {
   setup([], {});

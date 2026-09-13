@@ -246,6 +246,47 @@ app.post('/api/playlists', auth.requireAuth, async (req, res) => {
 // client polls GET /api/playlists to watch it finish.
 const prefetchInFlight = new Set(); // playlist ids currently caching
 
+async function fetchUrlBytes(url) {
+  const res = await fetch(url, { redirect: 'follow', signal: AbortSignal.timeout(30000) });
+  if (!res.ok) throw new Error('HTTP ' + res.status);
+  const buf = Buffer.from(await res.arrayBuffer());
+  if (!buf.length) throw new Error('Leere Antwort');
+  return buf;
+}
+
+// Fetches the actual preview audio for a track id, whichever service it
+// belongs to (Deezer-native tracks store a bare numeric id; the others are
+// prefixed strings already).
+async function fetchAudioBytes(id) {
+  if (id.startsWith('spotify:')) return fetchUrlBytes(await spotify.getFreshPreviewUrl(id.slice(8)));
+  if (id.startsWith('youtube:')) return createClip(id.slice(8), new AbortController().signal);
+  return fetchUrlBytes(await deezer.getFreshPreviewUrl(id));
+}
+
+// A track's primary source can lose its preview after the fact (previews
+// get swapped out, region-locked, or removed) even though it played fine
+// when the playlist was first imported. Rather than mark it permanently
+// unavailable, search the OTHER services for the same title/artist and use
+// whichever one still has a working preview — same idea as the original
+// import's matching cascade (src/deezer.js's matchSong), just re-entered
+// from whichever source wasn't the track's original one. YouTube needs
+// yt-dlp, which the Android host doesn't bundle (see android/README.md);
+// createClip just fails fast there, so trying it is a harmless no-op on
+// that platform rather than a case that needs special-casing here.
+async function findFallbackAudio(t) {
+  const query = { title: t.t, artist: t.a };
+  const attempts = String(t.id).startsWith('spotify:')
+    ? [() => deezer.matchViaSearch(query), () => youtube.findSongPreview(query)]
+    : [() => spotify.findSongPreview(query, { search: true }), () => youtube.findSongPreview(query)];
+  for (const attempt of attempts) {
+    let candidate;
+    try { candidate = await attempt(); } catch (e) { continue; }
+    if (!candidate) continue;
+    try { return await fetchAudioBytes(String(candidate.id)); } catch (e) { /* try the next source */ }
+  }
+  throw new Error('Keine Vorschau in einer anderen Quelle gefunden');
+}
+
 async function runPrefetch(playlistId) {
   const playlist = store.getPlaylist(playlistId);
   if (!playlist) return;
@@ -253,19 +294,15 @@ async function runPrefetch(playlistId) {
   store.updatePlaylist(playlistId, { cacheStatus: 'caching', cacheProgress: { done: 0, total: missing.length } });
   let failed = 0;
   await deezer.mapLimit(missing, 2, 250, async (t) => {
+    const id = String(t.id);
     try {
-      if (t.id.startsWith('spotify:')) {
-        const url = await spotify.getFreshPreviewUrl(t.id.slice(8));
-        await audioCache.cacheFromUrl(t.id, url);
-      } else if (t.id.startsWith('youtube:')) {
-        const buf = await createClip(t.id.slice(8), new AbortController().signal);
-        audioCache.cacheFromBuffer(t.id, buf);
-      } else {
-        const url = await deezer.getFreshPreviewUrl(t.id);
-        await audioCache.cacheFromUrl(t.id, url);
+      audioCache.cacheFromBuffer(id, await fetchAudioBytes(id));
+    } catch (ePrimary) {
+      try {
+        audioCache.cacheFromBuffer(id, await findFallbackAudio(t));
+      } catch (eFallback) {
+        failed++;
       }
-    } catch (e) {
-      failed++;
     }
   }, (done, total) => store.updatePlaylist(playlistId, { cacheProgress: { done, total } }));
   store.updatePlaylist(playlistId, {

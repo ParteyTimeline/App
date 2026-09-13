@@ -513,7 +513,9 @@ function renderCacheStatus(p) {
     return `<span class="pmeta" title="${esc(p.cacheNote || '')}">📥 offline verfügbar</span>`;
   }
   if (p.cacheStatus === 'partial' || p.cacheStatus === 'failed') {
-    return `<button class="btn ghost small" data-action="prefetchplaylist" data-id="${esc(p.id)}" title="${esc(p.cacheNote || '')}">📥 erneut versuchen</button>`;
+    return `
+      <span class="pmeta">📥 ${esc(p.cacheNote || (p.cacheStatus === 'partial' ? 'teilweise offline verfügbar' : 'Download fehlgeschlagen'))}</span>
+      <button class="btn ghost small" data-action="prefetchplaylist" data-id="${esc(p.id)}">erneut versuchen</button>`;
   }
   return `<button class="btn ghost small" data-action="prefetchplaylist" data-id="${esc(p.id)}">📥 für offline herunterladen</button>`;
 }

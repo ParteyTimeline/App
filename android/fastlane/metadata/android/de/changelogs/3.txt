@@ -1,0 +1,3 @@
+Keine Accounts und Raumcodes mehr für lokales Spiel: alle geben einfach
+einen Namen ein und landen automatisch in der Runde des Gastgebers — egal
+ob über Nearby oder per Browser eines anderen Handys im selben WLAN.

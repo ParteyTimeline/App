@@ -1,0 +1,3 @@
+No more accounts or room codes for local play: everyone just picks a
+name and is dropped straight into the host's game, whether joining over
+Nearby or from another phone's browser on the same Wi-Fi.

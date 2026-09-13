@@ -87,6 +87,23 @@ einer bestehenden Domain laufen soll (z. B. `https://deine-domain.example/partey
 ab, über die der Spielzustand läuft. Läuft die App stattdessen auf einer eigenen (Sub-)Domain,
 genügt ein einfacher `location / { proxy_pass ...; }`-Block mit denselben Headern.
 
+## Offline spielen (Vorschauen vorab herunterladen)
+
+In der Playlist-Bibliothek lässt sich pro Playliste "📥 für offline herunterladen"
+antippen — lädt alle Vorschau-Clips einmal herunter und speichert sie unter
+`data/audio-cache/`. Danach kommt `/api/track/:id/preview` aus dem lokalen Cache statt per
+Redirect von Deezer/Spotify bzw. Live-Generierung bei YouTube — nützlich bei wackliger
+Verbindung, und Voraussetzung für komplett internetfreies Spielen über die Android-App
+(siehe unten).
+
+## Android-App: mit Freunden in der Nähe, ganz ohne Server
+
+Im Verzeichnis `android/` liegt eine Android-App, mit der ein Handy den Server lokal
+hostet und andere Handys sich **ohne gemeinsames WLAN** verbinden (Nearby Connections,
+funktioniert auch wenn der Host nur Mobilfunk-Internet hat) — oder, falls der Host
+zufällig im WLAN ist, per normalem Browser samt QR-Code (auch für iPhones/Laptops, ohne
+App-Install). Details, Setup und bekannte Einschränkungen: [`android/README.md`](android/README.md).
+
 ## Bekannte Einschränkungen
 
 - Räume (laufende Spiele) leben nur im Arbeitsspeicher — ein Server-Neustart beendet alle laufenden

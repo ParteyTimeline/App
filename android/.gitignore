@@ -1,0 +1,13 @@
+.gradle/
+build/
+app/build/
+app/.cxx/
+local.properties
+*.iml
+.idea/
+
+# Populated by scripts/fetch-libnode.sh — large prebuilt binaries, not ours to version.
+app/libnode/
+
+# Populated by the :app:syncNodeProject Gradle task from the repo root at build time.
+app/src/main/assets/nodejs-project/

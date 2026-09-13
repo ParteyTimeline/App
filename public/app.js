@@ -235,13 +235,23 @@ let playlistPollTimer = null;
 
 async function loadPlaylists() {
   PLAYLISTS = await api('GET', 'api/playlists');
-  const anyImporting = PLAYLISTS.some((p) => p.status === 'importing');
+  const anyPending = PLAYLISTS.some((p) => p.status === 'importing' || p.cacheStatus === 'caching');
   clearTimeout(playlistPollTimer);
-  if (anyImporting) {
+  if (anyPending) {
     playlistPollTimer = setTimeout(async () => {
       await loadPlaylists();
       render();
     }, 3000);
+  }
+}
+
+async function prefetchPlaylist(id) {
+  try {
+    await api('POST', `api/playlists/${id}/prefetch`, {});
+    await loadPlaylists();
+    render();
+  } catch (e) {
+    LOBBY_ERROR = e.message; render();
   }
 }
 
@@ -471,20 +481,41 @@ function renderPlaylistList(selected) {
         <span class="pmeta">Fehlgeschlagen: ${esc(p.error || 'unbekannter Fehler')}</span>
       </div>`;
     }
+    const cacheHtml = renderCacheStatus(p);
     if (selected) {
       return `
       <label class="playlist-row">
         <input type="checkbox" data-action="toggleplaylist" data-id="${esc(p.id)}" ${selected.has(p.id) ? 'checked' : ''}>
         <span class="pname">${esc(p.name)}</span>
         <span class="pmeta">${p.count} Songs · ${esc(p.addedBy)}</span>
+        ${cacheHtml}
       </label>`;
     }
     return `
     <div class="playlist-row">
       <span class="pname">${esc(p.name)}</span>
       <span class="pmeta">${p.count} Songs · ${esc(p.addedBy)}</span>
+      ${cacheHtml}
     </div>`;
   }).join('');
+}
+
+// "Vorschauen herunterladen" — lets a playlist be made available for
+// completely offline play (see POST /api/playlists/:id/prefetch), useful
+// both for a flaky connection and for the Android Nearby-Play mode where
+// peers may have no internet access at all.
+function renderCacheStatus(p) {
+  if (p.cacheStatus === 'caching') {
+    const pct = (p.cacheProgress && p.cacheProgress.total) ? Math.min(100, (p.cacheProgress.done / p.cacheProgress.total) * 100) : 0;
+    return `<div class="import-bar" title="Vorschauen werden heruntergeladen (${p.cacheProgress ? `${p.cacheProgress.done}/${p.cacheProgress.total}` : '…'})"><i style="width:${pct}%"></i></div>`;
+  }
+  if (p.cacheStatus === 'ready') {
+    return `<span class="pmeta" title="${esc(p.cacheNote || '')}">📥 offline verfügbar</span>`;
+  }
+  if (p.cacheStatus === 'partial' || p.cacheStatus === 'failed') {
+    return `<button class="btn ghost small" data-action="prefetchplaylist" data-id="${esc(p.id)}" title="${esc(p.cacheNote || '')}">📥 erneut versuchen</button>`;
+  }
+  return `<button class="btn ghost small" data-action="prefetchplaylist" data-id="${esc(p.id)}">📥 für offline herunterladen</button>`;
 }
 
 function renderLobby() {
@@ -928,6 +959,10 @@ function bindEvents() {
     else if (action === 'addplaylist') {
       const input = document.getElementById('newPlaylistUrl');
       addPlaylist(input.value);
+    }
+    else if (action === 'prefetchplaylist') {
+      e.preventDefault(); // button can sit inside a <label> (selection checkbox) — don't also toggle that
+      prefetchPlaylist(btn.dataset.id);
     }
     else if (action === 'target') { TARGET = parseInt(btn.dataset.t, 10); render(); }
     else if (action === 'teamcount') { TEAM_COUNT = parseInt(btn.dataset.t, 10); render(); }

@@ -10,7 +10,8 @@ const store = require('./src/store');
 const deezer = require('./src/deezer');
 const spotify = require('./src/spotify');
 const youtube = require('./src/youtube');
-const { streamPreview } = require('./src/youtube-audio');
+const { streamPreview, createClip } = require('./src/youtube-audio');
+const audioCache = require('./src/audio-cache');
 const rooms = require('./src/rooms');
 const attachWebSocket = require('./src/ws');
 
@@ -115,6 +116,9 @@ app.get('/api/playlists', auth.requireAuth, (req, res) => {
       progress: p.progress,
       note: p.note,
       error: p.error,
+      cacheStatus: p.cacheStatus,
+      cacheProgress: p.cacheProgress,
+      cacheNote: p.cacheNote,
     }))
   );
 });
@@ -235,8 +239,58 @@ app.post('/api/playlists', auth.requireAuth, async (req, res) => {
   runImport(playlist.id, { source, url, pasteKind, pasteText: url }).finally(() => importsInFlight.delete(sourceKey));
 });
 
+// Downloads every track's preview audio to data/audio-cache/ up front, so a
+// round can be played later with zero internet access (offline Nearby-Play,
+// or just resilience against a flaky connection). Reuses the same async
+// job + progress pattern as playlist import (see runImport above) — the
+// client polls GET /api/playlists to watch it finish.
+const prefetchInFlight = new Set(); // playlist ids currently caching
+
+async function runPrefetch(playlistId) {
+  const playlist = store.getPlaylist(playlistId);
+  if (!playlist) return;
+  const missing = playlist.tracks.filter((t) => !audioCache.isCached(t.id));
+  store.updatePlaylist(playlistId, { cacheStatus: 'caching', cacheProgress: { done: 0, total: missing.length } });
+  let failed = 0;
+  await deezer.mapLimit(missing, 2, 250, async (t) => {
+    try {
+      if (t.id.startsWith('spotify:')) {
+        const url = await spotify.getFreshPreviewUrl(t.id.slice(8));
+        await audioCache.cacheFromUrl(t.id, url);
+      } else if (t.id.startsWith('youtube:')) {
+        const buf = await createClip(t.id.slice(8), new AbortController().signal);
+        audioCache.cacheFromBuffer(t.id, buf);
+      } else {
+        const url = await deezer.getFreshPreviewUrl(t.id);
+        await audioCache.cacheFromUrl(t.id, url);
+      }
+    } catch (e) {
+      failed++;
+    }
+  }, (done, total) => store.updatePlaylist(playlistId, { cacheProgress: { done, total } }));
+  store.updatePlaylist(playlistId, {
+    cacheStatus: failed === 0 ? 'ready' : failed === missing.length ? 'failed' : 'partial',
+    cacheNote: failed ? `${missing.length - failed} von ${missing.length} fehlenden Vorschauen zwischengespeichert (${failed} nicht verfügbar)` : undefined,
+  });
+}
+
+app.post('/api/playlists/:id/prefetch', auth.requireAuth, (req, res) => {
+  const playlist = store.getPlaylist(req.params.id);
+  if (!playlist) return res.status(404).json({ error: 'Playlist nicht gefunden' });
+  if (playlist.status !== 'ready') return res.status(400).json({ error: 'Playlist ist noch nicht fertig importiert' });
+  if (prefetchInFlight.has(req.params.id)) return res.status(409).json({ error: 'Wird schon heruntergeladen' });
+  prefetchInFlight.add(req.params.id);
+  res.json({ status: 'caching' });
+  runPrefetch(req.params.id).finally(() => prefetchInFlight.delete(req.params.id));
+});
+
 // YouTube clips are streamed on demand; Deezer tracks use fresh signed previews.
+// A locally cached copy (see /prefetch above) always wins, since it needs no
+// network at all and works after the original signed URL has expired.
 app.get('/api/track/:id/preview', auth.requireAuth, async (req, res) => {
+  if (audioCache.isCached(req.params.id)) {
+    return audioCache.serveCached(req.params.id, req, res);
+  }
   if (req.params.id.startsWith('youtube:')) {
     const known = store.listPlaylists().some((p) => p.tracks.some((t) => t.id === req.params.id));
     if (!known) return res.status(404).send('Song nicht gefunden');

@@ -16,7 +16,32 @@
             android:text="@string/app_name"
             android:textSize="24sp"
             android:textStyle="bold"
-            android:layout_marginBottom="24dp" />
+            android:layout_marginBottom="8dp" />
+
+        <LinearLayout
+            android:id="@+id/langSwitch"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:layout_marginBottom="16dp">
+
+            <Button
+                android:id="@+id/btnLangDe"
+                style="?android:attr/buttonStyleSmall"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:contentDescription="@string/lang_switch_content_description"
+                android:text="DE" />
+
+            <Button
+                android:id="@+id/btnLangEn"
+                style="?android:attr/buttonStyleSmall"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="8dp"
+                android:contentDescription="@string/lang_switch_content_description"
+                android:text="EN" />
+        </LinearLayout>
 
         <LinearLayout
             android:id="@+id/modeButtons"

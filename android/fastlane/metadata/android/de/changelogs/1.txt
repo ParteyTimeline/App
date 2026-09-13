@@ -1,0 +1,4 @@
+Erste Version: Eine Partey-Timeline-Runde ganz ohne Internet und ohne
+externen Server hosten — per Nearby Connections (Bluetooth/Wi-Fi Direct)
+oder per Browser + QR-Code im selben WLAN. Deutsche und englische
+Oberfläche.

@@ -1,0 +1,29 @@
+Partey Timeline is a Hitster-style music party game: teams take turns
+listening to a 30-second song clip and placing it in the right spot on
+their own year-by-year timeline. Get it right, keep the card; get it
+wrong, and another team can steal it.
+
+This app lets one phone run the whole game with no internet connection
+and no external server required:
+
+• One phone (the "host") starts an embedded game server locally.
+• Other phones join over Bluetooth / Wi-Fi Direct (Android's Nearby
+  Connections) — works even if the host only has mobile data, or no
+  data at all.
+• If the host happens to be on Wi-Fi, anyone on that same network can
+  instead join from a plain browser via a QR code — no app install
+  needed, works from an iPhone or laptop too.
+
+Playlists can be built from Deezer, Spotify, or YouTube links (including
+a workaround for large personal Spotify playlists without Premium), and
+can be downloaded ahead of time so a round plays back with zero internet
+access at all — useful for the Nearby mode, or just a flaky connection.
+
+Team play, a steal mechanic, an optional title/artist bonus round (voted
+on locally or typed in and auto-matched for online play), and full
+English/German UI are all built in.
+
+Note on permissions: joining/hosting nearby games uses Android's Nearby
+Connections API, which depends on Google Play Services — there is no
+Play-Services-free way to get the same Bluetooth/Wi-Fi Direct
+auto-negotiation. The plain browser/QR join path does not need it.

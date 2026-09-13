@@ -25,7 +25,7 @@ function verify(username, password) {
 
 function requireAuth(req, res, next) {
   if (!req.session || !req.session.user) {
-    return res.status(401).json({ error: 'Nicht eingeloggt' });
+    return res.status(401).json({ error: 'Nicht eingeloggt', code: 'not_authenticated' });
   }
   next();
 }

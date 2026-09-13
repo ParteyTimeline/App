@@ -109,8 +109,26 @@ async function api(method, path, body) {
   });
   let data = null;
   try { data = await res.json(); } catch (e) { /* no body */ }
-  if (!res.ok) throw new Error((data && data.error) || `Fehler ${res.status}`);
+  if (!res.ok) {
+    const err = new Error((data && data.error) || t('api.genericError', { status: res.status }));
+    if (data && data.code) err.code = data.code;
+    if (data && data.params) err.params = data.params;
+    throw err;
+  }
   return data;
+}
+
+// The server sends a stable `code` (+ optional `params`) alongside its
+// German fallback `error` text — see server.js's res.status(...).json({error,
+// code}) calls. Translate via that code when we recognize it (covers both
+// languages); an error the dictionary doesn't know about (or one with no
+// code at all) still shows its raw German text rather than nothing.
+function apiErrorMessage(e) {
+  if (e.code) {
+    const key = 'apiErr.' + e.code;
+    if ((STRINGS[LANG] && key in STRINGS[LANG]) || key in STRINGS.de) return t(key, e.params);
+  }
+  return e.message;
 }
 
 function getAudio() { return document.getElementById('player'); }
@@ -251,7 +269,7 @@ async function prefetchPlaylist(id) {
     await loadPlaylists();
     render();
   } catch (e) {
-    LOBBY_ERROR = e.message; render();
+    LOBBY_ERROR = apiErrorMessage(e); render();
   }
 }
 
@@ -265,7 +283,7 @@ async function doAuth(mode, username, password) {
     VIEW = 'lobby';
     await loadPlaylists();
   } catch (e) {
-    AUTH_ERROR = e.message;
+    AUTH_ERROR = apiErrorMessage(e);
   }
   render();
 }
@@ -286,10 +304,10 @@ async function addPlaylist(url) {
     await api('POST', 'api/playlists', { url: url.trim() });
     const input = document.getElementById('newPlaylistUrl');
     if (input) input.value = '';
-    LOBBY_NOTE = 'Import gestartet — läuft im Hintergrund weiter, Fortschritt siehe Liste oben.';
+    LOBBY_NOTE = t('lobby.importStarted');
     await loadPlaylists();
   } catch (e) {
-    LOBBY_ERROR = e.message;
+    LOBBY_ERROR = apiErrorMessage(e);
   }
   ADDING_PLAYLIST = false;
   render();
@@ -304,7 +322,7 @@ async function createRoom(name) {
     });
     connectRoom(code);
   } catch (e) {
-    LOBBY_ERROR = e.message; render();
+    LOBBY_ERROR = apiErrorMessage(e); render();
   }
 }
 
@@ -316,7 +334,7 @@ async function joinRoom(code) {
     await api('POST', `api/rooms/${code}/join`, {});
     connectRoom(code);
   } catch (e) {
-    LOBBY_ERROR = e.message; render();
+    LOBBY_ERROR = apiErrorMessage(e); render();
   }
 }
 
@@ -367,15 +385,8 @@ function connectRoom(code) {
       remotePlaying = !!msg.playing;
       render();
     } else if (msg.type === 'error') {
-      const known = {
-        spot_taken: 'Diese Lücke hat schon ein anderes Team gewettet.',
-        already_challenged: 'Euer Team hat für diese Karte schon gewettet.',
-        no_tokens: 'Keine Tokens mehr übrig.',
-        cannot_challenge_own_turn: 'Ihr könnt nicht gegen euren eigenen Zug wetten.',
-        no_playlists_selected: 'Noch niemand hat Playlisten ausgewählt.',
-        need_more_teams: 'Mindestens 2 Teams brauchen je 1 Spieler.',
-      };
-      wsErrorMsg = known[msg.message] || '';
+      const known = ['spot_taken', 'already_challenged', 'no_tokens', 'cannot_challenge_own_turn', 'no_playlists_selected', 'need_more_teams'];
+      wsErrorMsg = known.includes(msg.message) ? t('err.' + msg.message) : '';
       if (wsErrorMsg) {
         render();
         setTimeout(() => { wsErrorMsg = ''; render(); }, 4000);
@@ -401,12 +412,12 @@ function myTeam(s) { return s.teams.find((t) => t.members.includes(ME.username))
 function renderAudioControl(s) {
   const host = s.audioHost;
   if (!host) {
-    return `<button class="btn small ghost" data-action="claimaudio">🔊 Dieses Handy als Ton-Gerät festlegen (mit Box verbinden)</button>`;
+    return `<button class="btn small ghost" data-action="claimaudio">${t('audio.claim')}</button>`;
   }
   if (host === ME.username) {
-    return `<div class="audio-host-note">🔊 Ton läuft auf diesem Gerät <button class="btn small ghost" data-action="releaseaudio">Beenden</button></div>`;
+    return `<div class="audio-host-note">${t('audio.playingHere')} <button class="btn small ghost" data-action="releaseaudio">${t('audio.stop')}</button></div>`;
   }
-  return `<div class="audio-host-note">🔊 Ton läuft auf <strong>${esc(host)}</strong>s Gerät</div>`;
+  return `<div class="audio-host-note">${t('audio.playingOn', { host: `<strong>${esc(host)}</strong>` })}</div>`;
 }
 
 // ---------------- render ----------------
@@ -420,14 +431,19 @@ function render() {
   bindEvents();
 }
 
+function renderLangSwitch() {
+  return SUPPORTED_LANGS.map((l) => `<button class="lang-opt ${l === LANG ? 'active' : ''}" data-action="setlang" data-lang="${l}">${l.toUpperCase()}</button>`).join('');
+}
+
 function renderHeader(extra) {
   return `
   <header class="top">
     <div class="brand">
       <div class="mark">PARTEY<span class="hot">TIMELINE</span></div>
-      <span class="sub">eigener Server · Team-Modus</span>
+      <span class="sub">${t('app.subtitle')}</span>
     </div>
-    ${ME ? `<div class="who"><span class="name">${esc(ME.username)}</span><button class="btn small ghost" data-action="logout">Logout</button></div>` : ''}
+    <div class="lang-switch">${renderLangSwitch()}</div>
+    ${ME ? `<div class="who"><span class="name">${esc(ME.username)}</span><button class="btn small ghost" data-action="logout">${t('header.logout')}</button></div>` : ''}
   </header>
   ${extra || ''}`;
 }
@@ -437,23 +453,23 @@ function renderAuth() {
   <div class="auth-wrap">
     ${renderHeader()}
     <div class="card">
-      <h2>${AUTH_MODE === 'login' ? 'Einloggen' : 'Account erstellen'}</h2>
-      <p class="lead">Server-Version von Partey Timeline: jede:r loggt sich mit eigenem Account ein und spielt in Teams, jeder auf dem eigenen Handy.</p>
+      <h2>${AUTH_MODE === 'login' ? t('auth.loginTitle') : t('auth.registerTitle')}</h2>
+      <p class="lead">${t('auth.lead')}</p>
       <div class="auth-tabs">
-        <button class="${AUTH_MODE === 'login' ? 'active' : ''}" data-action="authmode" data-mode="login">Login</button>
-        <button class="${AUTH_MODE === 'register' ? 'active' : ''}" data-action="authmode" data-mode="register">Registrieren</button>
+        <button class="${AUTH_MODE === 'login' ? 'active' : ''}" data-action="authmode" data-mode="login">${t('auth.tabLogin')}</button>
+        <button class="${AUTH_MODE === 'register' ? 'active' : ''}" data-action="authmode" data-mode="register">${t('auth.tabRegister')}</button>
       </div>
       ${AUTH_ERROR ? `<div class="error-msg">${esc(AUTH_ERROR)}</div>` : ''}
       <form data-form="auth">
         <div class="field">
-          <label class="field-label">Nutzername</label>
+          <label class="field-label">${t('auth.username')}</label>
           <input type="text" name="username" autocomplete="username" required maxlength="20">
         </div>
         <div class="field">
-          <label class="field-label">Passwort</label>
+          <label class="field-label">${t('auth.password')}</label>
           <input type="password" name="password" autocomplete="${AUTH_MODE === 'login' ? 'current-password' : 'new-password'}" required minlength="6">
         </div>
-        <button class="btn primary block" type="submit">${AUTH_MODE === 'login' ? '▶ Einloggen' : '▶ Account erstellen'}</button>
+        <button class="btn primary block" type="submit">${AUTH_MODE === 'login' ? t('auth.submitLogin') : t('auth.submitRegister')}</button>
       </form>
     </div>
   </div>`;
@@ -462,7 +478,7 @@ function renderAuth() {
 // Shared between the pre-room lobby (read-only) and the waiting room
 // (checkboxes, per-player selection) — `selected` is null for read-only.
 function renderPlaylistList(selected) {
-  if (!PLAYLISTS.length) return `<p class="hint-msg">Noch keine Playlist in der Bibliothek — füg unten die erste hinzu.</p>`;
+  if (!PLAYLISTS.length) return `<p class="hint-msg">${t('playlist.empty')}</p>`;
   return PLAYLISTS.map((p) => {
     if (p.status === 'importing') {
       const pct = (p.progress && p.progress.total) ? Math.min(100, (p.progress.done / p.progress.total) * 100) : 0;
@@ -470,31 +486,33 @@ function renderPlaylistList(selected) {
       <div class="playlist-row importing">
         <span class="spinner"></span>
         <span class="pname">${esc(p.name)}</span>
-        <span class="pmeta">${p.progress && p.progress.total ? `${p.progress.done}/${p.progress.total}` : 'startet …'}</span>
+        <span class="pmeta">${p.progress && p.progress.total ? `${p.progress.done}/${p.progress.total}` : t('playlist.starting')}</span>
         <div class="import-bar"><i style="width:${pct}%"></i></div>
       </div>`;
     }
     if (p.status === 'failed') {
+      const reason = p.errorCode && `playlistErr.${p.errorCode}` in STRINGS.de ? t(`playlistErr.${p.errorCode}`) : (p.error || t('playlist.unknownError'));
       return `
       <div class="playlist-row failed">
         <span class="pname">${esc(p.name)}</span>
-        <span class="pmeta">Fehlgeschlagen: ${esc(p.error || 'unbekannter Fehler')}</span>
+        <span class="pmeta">${t('playlist.failedPrefix')}${esc(reason)}</span>
       </div>`;
     }
     const cacheHtml = renderCacheStatus(p);
+    const metaHtml = t('playlist.meta', { count: p.count, addedBy: esc(p.addedBy) });
     if (selected) {
       return `
       <label class="playlist-row">
         <input type="checkbox" data-action="toggleplaylist" data-id="${esc(p.id)}" ${selected.has(p.id) ? 'checked' : ''}>
         <span class="pname">${esc(p.name)}</span>
-        <span class="pmeta">${p.count} Songs · ${esc(p.addedBy)}</span>
+        <span class="pmeta">${metaHtml}</span>
         ${cacheHtml}
       </label>`;
     }
     return `
     <div class="playlist-row">
       <span class="pname">${esc(p.name)}</span>
-      <span class="pmeta">${p.count} Songs · ${esc(p.addedBy)}</span>
+      <span class="pmeta">${metaHtml}</span>
       ${cacheHtml}
     </div>`;
   }).join('');
@@ -507,29 +525,32 @@ function renderPlaylistList(selected) {
 function renderCacheStatus(p) {
   if (p.cacheStatus === 'caching') {
     const pct = (p.cacheProgress && p.cacheProgress.total) ? Math.min(100, (p.cacheProgress.done / p.cacheProgress.total) * 100) : 0;
-    return `<div class="import-bar" title="Vorschauen werden heruntergeladen (${p.cacheProgress ? `${p.cacheProgress.done}/${p.cacheProgress.total}` : '…'})"><i style="width:${pct}%"></i></div>`;
+    const progressText = p.cacheProgress ? `${p.cacheProgress.done}/${p.cacheProgress.total}` : '…';
+    return `<div class="import-bar" title="${t('cache.downloading', { progress: progressText })}"><i style="width:${pct}%"></i></div>`;
   }
   if (p.cacheStatus === 'ready') {
-    return `<span class="pmeta" title="${esc(p.cacheNote || '')}">📥 offline verfügbar</span>`;
+    return `<span class="pmeta" title="${esc(p.cacheNote || '')}">${t('cache.offlineReady')}</span>`;
   }
   if (p.cacheStatus === 'partial' || p.cacheStatus === 'failed') {
+    const note = p.cacheNoteParams ? t('cache.partialNote', p.cacheNoteParams)
+      : p.cacheNote || (p.cacheStatus === 'partial' ? t('cache.partialDefault') : t('cache.failedDefault'));
     return `
-      <span class="pmeta">📥 ${esc(p.cacheNote || (p.cacheStatus === 'partial' ? 'teilweise offline verfügbar' : 'Download fehlgeschlagen'))}</span>
-      <button class="btn ghost small" data-action="prefetchplaylist" data-id="${esc(p.id)}">erneut versuchen</button>`;
+      <span class="pmeta">📥 ${esc(note)}</span>
+      <button class="btn ghost small" data-action="prefetchplaylist" data-id="${esc(p.id)}">${t('cache.retry')}</button>`;
   }
-  return `<button class="btn ghost small" data-action="prefetchplaylist" data-id="${esc(p.id)}">📥 für offline herunterladen</button>`;
+  return `<button class="btn ghost small" data-action="prefetchplaylist" data-id="${esc(p.id)}">${t('cache.download')}</button>`;
 }
 
 function renderLobby() {
   const plHtml = renderPlaylistList(null);
 
   const targets = [6, 8, 10, 12];
-  const targetHtml = targets.map((t) => `
-    <button class="target-opt ${t === TARGET ? 'active' : ''}" data-action="target" data-t="${t}">${t} Karten</button>`).join('');
+  const targetHtml = targets.map((n) => `
+    <button class="target-opt ${n === TARGET ? 'active' : ''}" data-action="target" data-t="${n}">${t('lobby.cardsButton', { t: n })}</button>`).join('');
 
   const teamCounts = [2, 3, 4, 5, 6];
-  const teamHtml = teamCounts.map((t) => `
-    <button class="target-opt ${t === TEAM_COUNT ? 'active' : ''}" data-action="teamcount" data-t="${t}">${t} Teams</button>`).join('');
+  const teamHtml = teamCounts.map((n) => `
+    <button class="target-opt ${n === TEAM_COUNT ? 'active' : ''}" data-action="teamcount" data-t="${n}">${t('lobby.teamsButton', { t: n })}</button>`).join('');
 
   return `
   ${renderHeader()}
@@ -537,74 +558,73 @@ function renderLobby() {
   ${LOBBY_NOTE ? `<div class="hint-msg" style="margin-bottom:16px;">${esc(LOBBY_NOTE)}</div>` : ''}
   <div class="lobby-grid">
     <div class="card">
-      <h2>Neuen Raum erstellen</h2>
-      <p class="lead">Playlisten wählt jede:r Mitspieler:in gleich im Warteraum selbst — Songs werden <strong>pro Spieler:in gleich gewichtet</strong> gezogen, nicht pro Playlist. Wer drei Playlisten beisteuert, hat dadurch keinen Vorteil gegenüber wer nur eine hat.</p>
+      <h2>${t('lobby.createTitle')}</h2>
+      <p class="lead">${t('lobby.createLead')}</p>
 
-      <div class="section-title">Playlist-Bibliothek</div>
+      <div class="section-title">${t('lobby.libraryTitle')}</div>
       <div class="playlist-list">${plHtml}</div>
 
       <div class="add-playlist-row">
-        <textarea id="newPlaylistUrl" rows="2" placeholder="Playlist-Link (Deezer/Spotify/YouTube) — oder: in Spotify alle Songs markieren &amp; kopieren und hier einfügen, oder eine Exportify-CSV reinpasten"></textarea>
+        <textarea id="newPlaylistUrl" rows="2" placeholder="${esc(t('lobby.addPlaceholder'))}"></textarea>
         <button class="btn ${ADDING_PLAYLIST ? 'ghost' : 'gold'}" data-action="addplaylist" ${ADDING_PLAYLIST ? 'disabled' : ''}>
-          ${ADDING_PLAYLIST ? '<span class="spinner"></span> startet …' : '+ Hinzufügen'}
+          ${ADDING_PLAYLIST ? `<span class="spinner"></span> ${t('playlist.starting')}` : t('lobby.addButton')}
         </button>
       </div>
-      <p class="hint-msg" style="margin-top:-10px;margin-bottom:22px;">Große eigene Spotify-Playlist ohne Premium? Songs in Spotify mit Strg/Cmd+A markieren, kopieren (Strg/Cmd+C) und die kopierte Liste hier einfügen — umgeht das 100-Songs-Limit der normalen Link-Vorschau.</p>
+      <p class="hint-msg" style="margin-top:-10px;margin-bottom:22px;">${t('lobby.spotifyHint')}</p>
 
-      <div class="field-label">Anzahl Teams</div>
+      <div class="field-label">${t('lobby.teamCountLabel')}</div>
       <div class="target-row">${teamHtml}</div>
 
-      <div class="field-label">Ziel</div>
+      <div class="field-label">${t('lobby.targetLabel')}</div>
       <div class="target-row">${targetHtml}</div>
 
-      <div class="field-label">Titel &amp; Interpret-Bonus prüfen</div>
+      <div class="field-label">${t('lobby.bonusLabel')}</div>
       <div class="target-row">
-        <button class="target-opt ${BONUS_MODE === 'vote' ? 'active' : ''}" data-action="bonusmode" data-mode="vote">🗳️ Abstimmen (lokal)</button>
-        <button class="target-opt ${BONUS_MODE === 'typein' ? 'active' : ''}" data-action="bonusmode" data-mode="typein">⌨️ Eintippen (online)</button>
+        <button class="target-opt ${BONUS_MODE === 'vote' ? 'active' : ''}" data-action="bonusmode" data-mode="vote">${t('lobby.bonusVote')}</button>
+        <button class="target-opt ${BONUS_MODE === 'typein' ? 'active' : ''}" data-action="bonusmode" data-mode="typein">${t('lobby.bonusTypein')}</button>
       </div>
-      <p class="hint-msg" style="margin-top:-10px;">Abstimmen: andere Teams stimmen nach der Aufdeckung ab, ob's stimmte (alle im selben Raum). Eintippen: automatischer Abgleich, kein Vertrauen nötig — für Online-Runden.</p>
+      <p class="hint-msg" style="margin-top:-10px;">${t('lobby.bonusHint')}</p>
 
       <label class="bonus-check" style="margin:14px 0;">
         <input type="checkbox" data-action="toggledupyears" ${NO_DUPLICATE_YEARS ? 'checked' : ''}>
-        Keine doppelten Jahre pro Team (kein "geschenktes" Jahr-Duplikat)
+        ${t('lobby.dupYears')}
       </label>
 
-      <div class="field-label">Steal: Zeit zum Entscheiden ("will stehlen?")</div>
+      <div class="field-label">${t('lobby.stealIntentLabel')}</div>
       <div class="target-row">
         ${[3, 4, 6, 8].map((s) => `<button class="target-opt ${s === STEAL_INTENT_SEC ? 'active' : ''}" data-action="stealintentsec" data-t="${s}">${s}s</button>`).join('')}
       </div>
-      <div class="field-label">Steal: Zeit zum Platzieren (nur wer stehlen will)</div>
+      <div class="field-label">${t('lobby.stealPlaceLabel')}</div>
       <div class="target-row">
         ${[5, 10, 15, 20].map((s) => `<button class="target-opt ${s === STEAL_PLACE_SEC ? 'active' : ''}" data-action="stealplacesec" data-t="${s}">${s}s</button>`).join('')}
       </div>
-      <div class="field-label">Steal: zwei Teams wählen dieselbe Lücke</div>
+      <div class="field-label">${t('lobby.stealTieLabel')}</div>
       <div class="target-row">
-        <button class="target-opt ${STEAL_TIE_MODE === 'block' ? 'active' : ''}" data-action="stealtiemode" data-mode="block">Blockieren (2. Team muss anders wählen)</button>
-        <button class="target-opt ${STEAL_TIE_MODE === 'void' ? 'active' : ''}" data-action="stealtiemode" data-mode="void">Erlauben, bei Gleichstand bekommt keiner was</button>
+        <button class="target-opt ${STEAL_TIE_MODE === 'block' ? 'active' : ''}" data-action="stealtiemode" data-mode="block">${t('lobby.stealTieBlock')}</button>
+        <button class="target-opt ${STEAL_TIE_MODE === 'void' ? 'active' : ''}" data-action="stealtiemode" data-mode="void">${t('lobby.stealTieVoid')}</button>
       </div>
 
       <form data-form="createroom">
         <div class="field">
-          <label class="field-label">Raumname (optional)</label>
-          <input type="text" name="name" placeholder="${esc(ME.username)}s Runde" maxlength="40">
+          <label class="field-label">${t('lobby.roomNameLabel')}</label>
+          <input type="text" name="name" placeholder="${esc(t('lobby.roomNamePlaceholder', { username: ME.username }))}" maxlength="40">
         </div>
-        <button class="btn primary block" type="submit">▶ Raum erstellen</button>
+        <button class="btn primary block" type="submit">${t('lobby.createButton')}</button>
       </form>
     </div>
 
     <div class="card">
-      <h2>Raum beitreten</h2>
-      <p class="lead">Hat jemand schon einen Raum erstellt? Code eingeben — ihr werdet automatisch gleichmäßig auf die Teams verteilt und könnt in der Lobby noch wechseln.</p>
+      <h2>${t('lobby.joinTitle')}</h2>
+      <p class="lead">${t('lobby.joinLead')}</p>
       <form data-form="joinroom">
         <div class="field join-row">
-          <input type="text" name="code" placeholder="CODE" maxlength="4">
-          <button class="btn primary" type="submit">Beitreten</button>
+          <input type="text" name="code" placeholder="${t('lobby.codePlaceholder')}" maxlength="4">
+          <button class="btn primary" type="submit">${t('lobby.joinButton')}</button>
         </div>
       </form>
     </div>
   </div>
-  <footer class="credit">Audio via Spotify, Deezer &amp; YouTube · YouTube-Metadaten via MusicBrainz · inspiriert von
-    <a href="https://github.com/Born2Root/HitStar" target="_blank" rel="noopener">Born2Root/HitStar</a> &amp; Hitster</footer>`;
+  <footer class="credit">${t('lobby.footer')}</footer>`;
 }
 
 function renderRoom() {
@@ -623,13 +643,13 @@ function memberSongCount(s, username) {
 function renderRoomLobby(s) {
   const isHost = ME.username === s.hostUsername;
   const mine = myTeam(s);
-  const teamCards = s.teams.map((t) => `
-    <div class="team-card" style="border-color:${t.id === (mine && mine.id) ? t.color : 'var(--line)'}">
-      <div class="team-card-head"><span class="dot" style="background:${t.color}"></span>${esc(t.name)}</div>
-      <div class="team-members">${t.members.length ? t.members.map((m) => `<span class="member-chip">${esc(m)}${m === s.hostUsername ? ' 👑' : ''} · ${memberSongCount(s, m)} 🎵</span>`).join('') : '<span class="hint-msg">noch niemand</span>'}</div>
-      ${t.id === (mine && mine.id)
-        ? `<span class="hint-msg">✓ dein Team</span>`
-        : `<button class="btn small ghost" data-action="jointeam" data-team="${t.id}">Hierher wechseln</button>`}
+  const teamCards = s.teams.map((team) => `
+    <div class="team-card" style="border-color:${team.id === (mine && mine.id) ? team.color : 'var(--line)'}">
+      <div class="team-card-head"><span class="dot" style="background:${team.color}"></span>${esc(team.name)}</div>
+      <div class="team-members">${team.members.length ? team.members.map((m) => `<span class="member-chip">${esc(m)}${m === s.hostUsername ? ' 👑' : ''} · ${memberSongCount(s, m)} 🎵</span>`).join('') : `<span class="hint-msg">${t('room.noTeamYet')}</span>`}</div>
+      ${team.id === (mine && mine.id)
+        ? `<span class="hint-msg">${t('room.yourTeam')}</span>`
+        : `<button class="btn small ghost" data-action="jointeam" data-team="${team.id}">${t('room.switchHere')}</button>`}
     </div>
   `).join('');
 
@@ -645,28 +665,28 @@ function renderRoomLobby(s) {
   ${LOBBY_NOTE ? `<div class="hint-msg" style="margin-bottom:16px;">${esc(LOBBY_NOTE)}</div>` : ''}
   ${wsErrorMsg ? `<div class="error-msg">${esc(wsErrorMsg)}</div>` : ''}
   <div class="card" style="text-align:center;">
-    <h2>Warteraum</h2>
-    <p class="lead" style="margin-left:auto;margin-right:auto;">Raumcode teilen, alle geben ihn unter „Raum beitreten" ein.</p>
+    <h2>${t('room.waitingTitle')}</h2>
+    <p class="lead" style="margin-left:auto;margin-right:auto;">${t('room.waitingLead')}</p>
     <div class="room-code">${esc(s.code)}</div>
-    <p class="hint-msg">Ziel: ${s.target} Karten · Songs werden gleich gewichtet pro Spieler:in gezogen</p>
+    <p class="hint-msg">${t('room.targetInfo', { target: s.target })}</p>
     <div class="team-grid">${teamCards}</div>
     <div style="margin-bottom:18px;">${renderAudioControl(s)}</div>
     ${isHost
-      ? `<button class="btn primary" data-action="startgame" ${canStart ? '' : 'disabled'}>▶ Spiel starten</button>
-         ${nonEmptyTeams < 2 ? '<p class="hint-msg">Mindestens 2 Teams brauchen je 1 Spieler</p>' : ''}
-         ${nonEmptyTeams >= 2 && !anySongsSelected ? '<p class="hint-msg">Noch niemand hat Playlisten ausgewählt</p>' : ''}`
-      : `<p class="waiting-banner">Warte, bis ${esc(s.hostUsername)} das Spiel startet …</p>`}
-    <div style="margin-top:18px;"><button class="btn ghost small" data-action="leaveroom">Raum verlassen</button></div>
+      ? `<button class="btn primary" data-action="startgame" ${canStart ? '' : 'disabled'}>${t('room.startGame')}</button>
+         ${nonEmptyTeams < 2 ? `<p class="hint-msg">${t('room.needTwoTeams')}</p>` : ''}
+         ${nonEmptyTeams >= 2 && !anySongsSelected ? `<p class="hint-msg">${t('room.needPlaylists')}</p>` : ''}`
+      : `<p class="waiting-banner">${t('room.waitingForHost', { host: esc(s.hostUsername) })}</p>`}
+    <div style="margin-top:18px;"><button class="btn ghost small" data-action="leaveroom">${t('room.leaveRoom')}</button></div>
   </div>
 
   <div class="card" style="text-align:left;margin-top:18px;">
-    <h2>Deine Playlisten</h2>
-    <p class="lead">Wähl aus, welche deiner Playlisten mitspielen sollen — jede:r im Raum entscheidet für sich selbst.</p>
+    <h2>${t('room.yourPlaylistsTitle')}</h2>
+    <p class="lead">${t('room.yourPlaylistsLead')}</p>
     <div class="playlist-list">${myPicksHtml}</div>
     <div class="add-playlist-row">
-      <textarea id="newPlaylistUrl" rows="2" placeholder="Neue Playlist zur Bibliothek hinzufügen (Link oder eingefügte Liste) …"></textarea>
+      <textarea id="newPlaylistUrl" rows="2" placeholder="${esc(t('room.addPlaylistPlaceholder'))}"></textarea>
       <button class="btn ${ADDING_PLAYLIST ? 'ghost' : 'gold'}" data-action="addplaylist" ${ADDING_PLAYLIST ? 'disabled' : ''}>
-        ${ADDING_PLAYLIST ? '<span class="spinner"></span> startet …' : '+ Hinzufügen'}
+        ${ADDING_PLAYLIST ? `<span class="spinner"></span> ${t('playlist.starting')}` : t('lobby.addButton')}
       </button>
     </div>
   </div>`;
@@ -676,7 +696,7 @@ function renderGamePlay(s) {
   const active = s.teams[s.turnIndex];
   const mine = myTeam(s);
   const isMyTurn = !!(mine && mine.id === active.id);
-  const rightInfo = `<div class="who"><span class="name tab">Stapel: ${s.deckRemaining}</span></div>`;
+  const rightInfo = `<div class="who"><span class="name tab">${t('game.deckRemaining', { n: s.deckRemaining })}</span></div>`;
 
   if (s.currentCard && s.currentCard.id !== lastCardKeyForUi) {
     lastCardKeyForUi = s.currentCard.id;
@@ -694,8 +714,8 @@ function renderGamePlay(s) {
         <div class="flipcard-face flipcard-back"></div>
       </div></div>
       ${isMyTurn
-        ? `<button class="btn primary" data-action="draw">🎵 Karte ziehen</button>`
-        : `<p class="waiting-banner">${esc(active.name)} zieht die nächste Karte …</p>`}
+        ? `<button class="btn primary" data-action="draw">${t('game.draw')}</button>`
+        : `<p class="waiting-banner">${t('game.othersDrawing', { name: esc(active.name) })}</p>`}
     `;
   } else {
     const c = s.currentCard;
@@ -715,14 +735,14 @@ function renderGamePlay(s) {
       if (s.bonusMode === 'typein') {
         bonusInputHtml = `
           <div class="bonus-typein">
-            <input type="text" placeholder="Interpret" data-action="bonusartist" value="${esc(BONUS_TYPEIN_ARTIST)}">
-            <input type="text" placeholder="Titel" data-action="bonustitle" value="${esc(BONUS_TYPEIN_TITLE)}">
-            <span class="hint-msg">Optional, wird automatisch abgeglichen (+1 🪙 bei Treffer)</span>
+            <input type="text" placeholder="${t('game.artistPlaceholder')}" data-action="bonusartist" value="${esc(BONUS_TYPEIN_ARTIST)}">
+            <input type="text" placeholder="${t('game.titlePlaceholder')}" data-action="bonustitle" value="${esc(BONUS_TYPEIN_TITLE)}">
+            <span class="hint-msg">${t('game.typeinHint')}</span>
           </div>`;
       } else {
         bonusInputHtml = `<label class="bonus-check">
            <input type="checkbox" data-action="togglebonus" ${s.bonusClaimed ? 'checked' : ''}>
-           🎤 Wir wissen auch Titel &amp; Interpret (+1 🪙, andere stimmen danach ab)
+           ${t('game.bonusCheck')}
          </label>`;
       }
     }
@@ -735,26 +755,26 @@ function renderGamePlay(s) {
       const remain = secsLeft(s.stealDeadline);
       if (s.stealStage === 'intent') {
         if (mine.id === active.id) {
-          stealHtml = `<p class="waiting-banner">⏱ <span class="countdown-num">${remain}</span>s — andere Teams entscheiden, ob sie stehlen wollen …</p>`;
+          stealHtml = `<p class="waiting-banner">⏱ <span class="countdown-num">${remain}</span>s — ${t('game.stealIntentWaitingOthers')}</p>`;
         } else if (s.stealRespondedTeamIds.includes(mine.id)) {
-          stealHtml = `<p class="waiting-banner">⏱ <span class="countdown-num">${remain}</span>s — warte auf die anderen Teams …</p>`;
+          stealHtml = `<p class="waiting-banner">⏱ <span class="countdown-num">${remain}</span>s — ${t('game.stealIntentWaitingYou')}</p>`;
         } else {
           stealHtml = `
-            <p class="hint-msg">⏱ <span class="countdown-num">${remain}</span>s: Stehlen versuchen? Kostet 1 🪙 (ihr habt ${mine.tokens}).</p>
+            <p class="hint-msg">⏱ <span class="countdown-num">${remain}</span>s: ${t('game.stealPrompt', { n: mine.tokens })}</p>
             <div class="stage-actions">
-              <button class="btn gold small" data-action="stealwant" ${mine.tokens < 1 ? 'disabled' : ''}>🎯 Will stehlen</button>
-              <button class="btn ghost small" data-action="stealpass">✅ Kein Steal</button>
+              <button class="btn gold small" data-action="stealwant" ${mine.tokens < 1 ? 'disabled' : ''}>${t('game.stealWant')}</button>
+              <button class="btn ghost small" data-action="stealpass">${t('game.stealPass')}</button>
             </div>`;
         }
       } else if (s.stealStage === 'placing') {
         if (mine.id === active.id) {
-          stealHtml = `<p class="waiting-banner">⏱ <span class="countdown-num">${remain}</span>s — ${s.stealWantTeamIds.length} Team(s) versuchen zu stehlen …</p>`;
+          stealHtml = `<p class="waiting-banner">⏱ <span class="countdown-num">${remain}</span>s — ${t('game.stealPlacingActive', { n: s.stealWantTeamIds.length })}</p>`;
         } else if (s.stealWantTeamIds.includes(mine.id) && !s.stealPlacedTeamIds.includes(mine.id)) {
           stealHtml = `
-            <p class="hint-msg">⏱ <span class="countdown-num">${remain}</span>s: Wählt die Lücke in ${esc(active.name)}s Zeitleiste, wo die Karte eurer Meinung nach wirklich hingehört:</p>
+            <p class="hint-msg">⏱ <span class="countdown-num">${remain}</span>s: ${t('game.stealPlacingYou', { name: esc(active.name) })}</p>
             <div class="rail-scroll compact"><div class="rail">${renderRail(active, true, null, 'challenge')}</div></div>`;
         } else {
-          stealHtml = `<p class="waiting-banner">⏱ <span class="countdown-num">${remain}</span>s — warte auf Steal-Versuche …</p>`;
+          stealHtml = `<p class="waiting-banner">⏱ <span class="countdown-num">${remain}</span>s — ${t('game.stealPlacingWaiting')}</p>`;
         }
       }
     }
@@ -766,29 +786,29 @@ function renderGamePlay(s) {
       const remain = secsLeft(s.bonusDeadline);
       if (s.bonusVoteEligibleTeamIds.includes(mine.id) && !s.bonusVotedTeamIds.includes(mine.id)) {
         bonusVoteHtml = `<div class="bonus-resolve">
-           <span>⏱ <span class="countdown-num">${remain}</span>s: Titel &amp; Interpret wirklich richtig?</span>
-           <button class="btn small gold" data-action="bonusvote" data-correct="1">Ja, +1 🪙</button>
-           <button class="btn small ghost" data-action="bonusvote" data-correct="0">Nein</button>
+           <span>⏱ <span class="countdown-num">${remain}</span>s: ${t('game.bonusVoteQuestion')}</span>
+           <button class="btn small gold" data-action="bonusvote" data-correct="1">${t('game.bonusVoteYes')}</button>
+           <button class="btn small ghost" data-action="bonusvote" data-correct="0">${t('game.bonusVoteNo')}</button>
          </div>`;
       } else {
-        bonusVoteHtml = `<p class="waiting-banner">⏱ <span class="countdown-num">${remain}</span>s — Abstimmung läuft …</p>`;
+        bonusVoteHtml = `<p class="waiting-banner">⏱ <span class="countdown-num">${remain}</span>s — ${t('game.bonusVoteWaiting')}</p>`;
       }
     }
     const bonusDone = (s.bonusClaimed || s.bonusGuessSubmitted) && !s.bonusVoteStage && s.bonusResolved !== null;
     const bonusResultHtml = (revealed && bonusDone)
-      ? `<p class="hint-msg">🎤 Titel/Interpret: ${s.bonusResolved ? 'richtig ✓ (+1 🪙)' : 'falsch'}</p>`
+      ? `<p class="hint-msg">${s.bonusResolved ? t('game.bonusResultCorrect') : t('game.bonusResultWrong')}</p>`
       : '';
 
     let resultHtml = '';
     if (revealed) {
-      const stolenTeam = s.lastResult.stolenBy ? s.teams.find((t) => t.id === s.lastResult.stolenBy) : null;
+      const stolenTeam = s.lastResult.stolenBy ? s.teams.find((team) => team.id === s.lastResult.stolenBy) : null;
       resultHtml = `
         <div class="result-banner ${s.lastResult.correct ? 'ok' : 'no'}">
           ${s.lastResult.correct
-            ? '🎉 Richtig einsortiert!'
+            ? t('game.resultCorrect')
             : stolenTeam
-              ? `🥷 Daneben — ${esc(stolenTeam.name)} hat die Karte gestohlen! (Jahr war ${s.lastResult.card.y})`
-              : '❌ Leider daneben — Jahr war ' + s.lastResult.card.y}
+              ? t('game.resultStolen', { team: esc(stolenTeam.name), y: s.lastResult.card.y })
+              : t('game.resultWrong', { y: s.lastResult.card.y })}
         </div>`;
     }
 
@@ -796,11 +816,11 @@ function renderGamePlay(s) {
       <div class="player-zone">
         <div class="discwrap">
           <span class="disc ${isPlaying ? 'vinylspin' : ''}"></span>
-          <button class="play-btn" data-action="toggleplay" aria-label="${isPlaying ? 'Pause' : 'Play'}">${isPlaying ? '❚❚' : '▶'}</button>
+          <button class="play-btn" data-action="toggleplay" aria-label="${isPlaying ? t('game.pause') : t('game.play')}">${isPlaying ? '❚❚' : '▶'}</button>
         </div>
         ${iAmHostDevice
-          ? `<div class="progress"><i style="width:${pct}%"></i></div><span class="player-hint">${getAudio().error ? 'Audio nicht verfügbar – zum Wiederholen Play drücken' : '30-Sekunden-Anspieler'}</span>`
-          : `<span class="player-hint">🔊 spielt auf ${esc(s.audioHost)}s Gerät</span>`}
+          ? `<div class="progress"><i style="width:${pct}%"></i></div><span class="player-hint">${getAudio().error ? t('game.audioUnavailable') : t('game.previewHint')}</span>`
+          : `<span class="player-hint">${t('game.playingOnHost', { host: esc(s.audioHost) })}</span>`}
       </div>
       ${renderAudioControl(s)}
 
@@ -821,16 +841,16 @@ function renderGamePlay(s) {
       ${bonusResultHtml}
       ${revealed
         ? (isMyTurn && !s.bonusVoteStage
-            ? `<div class="stage-actions"><button class="btn gold" data-action="next">Weiter →</button></div>`
-            : (!isMyTurn && !s.bonusVoteStage ? `<p class="waiting-banner">${esc(active.name)} macht weiter …</p>` : ''))
+            ? `<div class="stage-actions"><button class="btn gold" data-action="next">${t('game.next')}</button></div>`
+            : (!isMyTurn && !s.bonusVoteStage ? `<p class="waiting-banner">${t('game.othersContinue', { name: esc(active.name) })}</p>` : ''))
         : placed
           ? stealHtml
           : isMyTurn ? `
             ${bonusInputHtml}
             <div class="stage-actions">
-              <button class="btn primary" data-action="placecard" ${s.selectedGap === null ? 'disabled' : ''}>An gewählter Stelle platzieren</button>
+              <button class="btn primary" data-action="placecard" ${s.selectedGap === null ? 'disabled' : ''}>${t('game.placeCard')}</button>
             </div>
-          ` : `<p class="waiting-banner">${esc(active.name)} hört rein und rät …</p>`}
+          ` : `<p class="waiting-banner">${t('game.othersGuessing', { name: esc(active.name) })}</p>`}
     `;
   }
 
@@ -843,23 +863,23 @@ function renderGamePlay(s) {
     isPlacedOrRevealed ? s.selectedGap : null
   );
 
-  const boardHtml = s.teams.map((t, i) => `
+  const boardHtml = s.teams.map((team, i) => `
     <div class="p ${i === s.turnIndex ? 'active' : ''}">
-      <div class="nm"><span>${esc(t.name)} <small style="opacity:.6;">(${t.members.length})</small></span><span class="tokens tab">🪙${t.tokens}</span></div>
-      <div class="p-score"><b class="tab">${t.timeline.length}</b><span>/ ${s.target} Karten · ${t.misses} Fehler</span></div>
-      <div class="bar"><i style="width:${Math.min(100, (t.timeline.length / s.target) * 100)}%; background:${t.color}"></i></div>
+      <div class="nm"><span>${esc(team.name)} <small style="opacity:.6;">(${team.members.length})</small></span><span class="tokens tab">🪙${team.tokens}</span></div>
+      <div class="p-score"><b class="tab">${team.timeline.length}</b><span>/ ${t('gameover.standingsStats', { cards: s.target, misses: team.misses })}</span></div>
+      <div class="bar"><i style="width:${Math.min(100, (team.timeline.length / s.target) * 100)}%; background:${team.color}"></i></div>
     </div>
   `).join('');
 
   // Everyone can always browse every team's timeline, not just the active
   // one — otherwise you're stuck staring at a progress bar while waiting.
-  const otherTeamsHtml = s.teams.filter((t) => t.id !== active.id).map((t) => `
+  const otherTeamsHtml = s.teams.filter((team) => team.id !== active.id).map((team) => `
     <div class="other-team-block">
       <div class="other-team-head">
-        <span class="dot" style="background:${t.color}"></span><strong>${esc(t.name)}</strong>
-        <span class="tab" style="margin-left:auto;opacity:.7;">${t.timeline.length}/${s.target}</span>
+        <span class="dot" style="background:${team.color}"></span><strong>${esc(team.name)}</strong>
+        <span class="tab" style="margin-left:auto;opacity:.7;">${team.timeline.length}/${s.target}</span>
       </div>
-      <div class="rail-scroll compact"><div class="rail">${renderRail(t, false, null)}</div></div>
+      <div class="rail-scroll compact"><div class="rail">${renderRail(team, false, null)}</div></div>
     </div>
   `).join('');
 
@@ -867,21 +887,21 @@ function renderGamePlay(s) {
   ${renderHeader(rightInfo)}
   ${errorHtml}
   <div class="turn-banner">
-    <div class="whoturn"><span class="dot">●</span> ${esc(active.name)} ist dran</div>
-    <div class="goal tab">Ziel: ${s.target} Karten</div>
+    <div class="whoturn"><span class="dot">●</span> ${t('game.turnBanner', { name: esc(active.name) })}</div>
+    <div class="goal tab">${t('game.goal', { n: s.target })}</div>
   </div>
 
   <div class="stage">${stageHtml}</div>
 
   <div class="timeline-head">
-    <h3>${esc(active.name)}s Zeitleiste</h3>
-    <span>${active.timeline.length} Karte${active.timeline.length === 1 ? '' : 'n'} · ${active.misses} Fehlversuch${active.misses === 1 ? '' : 'e'}</span>
+    <h3>${t('game.timelineHead', { name: esc(active.name) })}</h3>
+    <span>${tCount('game.cardCount', active.timeline.length)} · ${tCount('game.missCount', active.misses)}</span>
   </div>
   <div class="rail-scroll"><div class="rail">${railHtml}</div></div>
 
   <div class="board">${boardHtml}</div>
 
-  ${otherTeamsHtml ? `<div class="section-title" style="margin-top:22px;">Andere Zeitleisten</div>${otherTeamsHtml}` : ''}`;
+  ${otherTeamsHtml ? `<div class="section-title" style="margin-top:22px;">${t('game.otherTimelines')}</div>${otherTeamsHtml}` : ''}`;
 }
 
 function renderRail(team, interactive, selectedGap, action, lockedGap) {
@@ -891,7 +911,7 @@ function renderRail(team, interactive, selectedGap, action, lockedGap) {
   for (let g = 0; g <= tl.length; g++) {
     if (interactive) {
       const isSelected = selectedGap === g;
-      html += `<button class="gap-slot ${isSelected ? 'selected' : ''}" ${isSelected ? 'id="selected-gap-marker"' : ''} data-action="${action}" data-g="${g}" aria-label="Hier einsortieren"><span class="plus">+</span></button>`;
+      html += `<button class="gap-slot ${isSelected ? 'selected' : ''}" ${isSelected ? 'id="selected-gap-marker"' : ''} data-action="${action}" data-g="${g}" aria-label="${t('game.gapAriaLabel')}"><span class="plus">+</span></button>`;
     } else if (lockedGap === g) {
       // The card was committed here (phase 'placed'/'revealed') — visible to
       // everyone, same as a physical card lying face-down on the table.
@@ -915,20 +935,20 @@ function renderGameOver(s) {
   // — a plain index-based rank silently broke ties by array order alone.
   const tied = (a, b) => a.timeline.length === b.timeline.length && a.misses === b.misses;
   const sorted = s.teams.slice().sort((a, b) => b.timeline.length - a.timeline.length || a.misses - b.misses);
-  const winners = sorted.filter((t) => tied(t, sorted[0]));
+  const winners = sorted.filter((team) => tied(team, sorted[0]));
 
   let rank = 1;
-  const standings = sorted.map((t, i) => {
-    if (i > 0 && !tied(t, sorted[i - 1])) rank = i + 1;
-    return `<div><span>${rank}. ${esc(t.name)}</span><span class="tab">${t.timeline.length} Karten · ${t.misses} Fehler</span></div>`;
+  const standings = sorted.map((team, i) => {
+    if (i > 0 && !tied(team, sorted[i - 1])) rank = i + 1;
+    return `<div><span>${rank}. ${esc(team.name)}</span><span class="tab">${t('gameover.standingsStats', { cards: team.timeline.length, misses: team.misses })}</span></div>`;
   }).join('');
 
   const winnerHeading = winners.length > 1
-    ? `${winners.map((t) => esc(t.name)).join(' &amp; ')} <span class="win-name">gewinnen gemeinsam!</span>`
-    : `${esc(winners[0].name)} <span class="win-name">gewinnt!</span>`;
+    ? t('gameover.winTogether', { names: winners.map((team) => esc(team.name)).join(' &amp; ') })
+    : t('gameover.winSolo', { name: esc(winners[0].name) });
   const winnerSub = winners.length > 1
-    ? `mit je ${winners[0].timeline.length} richtig einsortierten Songs — echter Gleichstand`
-    : `mit ${winners[0].timeline.length} richtig einsortierten Songs (${winners[0].members.map(esc).join(', ')})`;
+    ? t('gameover.subTie', { n: winners[0].timeline.length })
+    : t('gameover.subSolo', { n: winners[0].timeline.length, members: winners[0].members.map(esc).join(', ') });
 
   return `
   ${renderHeader()}
@@ -937,7 +957,7 @@ function renderGameOver(s) {
     <h2>${winnerHeading}</h2>
     <p style="opacity:.75">${winnerSub}</p>
     <div class="standings">${standings}</div>
-    <button class="btn primary" data-action="leaveroom">🔁 Zurück zur Lobby</button>
+    <button class="btn primary" data-action="leaveroom">${t('gameover.backToLobby')}</button>
   </div>`;
 }
 
@@ -950,7 +970,8 @@ function bindEvents() {
     const btn = e.target.closest('[data-action]');
     if (!btn) return;
     const action = btn.dataset.action;
-    if (action === 'authmode') { AUTH_MODE = btn.dataset.mode; AUTH_ERROR = ''; render(); }
+    if (action === 'setlang') { setLang(btn.dataset.lang); render(); }
+    else if (action === 'authmode') { AUTH_MODE = btn.dataset.mode; AUTH_ERROR = ''; render(); }
     else if (action === 'logout') doLogout();
     else if (action === 'toggleplaylist') {
       const id = btn.dataset.id;

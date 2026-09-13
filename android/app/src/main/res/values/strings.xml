@@ -1,14 +1,20 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Partey Timeline Nearby</string>
-    <string name="btn_host">Als Host starten</string>
-    <string name="btn_join">Spiel in der Nähe suchen</string>
-    <string name="btn_continue_to_game">Weiter zum Spiel</string>
-    <string name="qr_content_description">QR-Code zum Beitreten über den Browser</string>
-    <string name="status_hosting">Host läuft — andere Geräte können jetzt beitreten (per Nearby-Beitritt oder, falls im selben WLAN, per Browser/QR-Code unten).</string>
-    <string name="status_discovering">Suche nach Hosts in der Nähe…</string>
-    <string name="status_connecting">Verbinde…</string>
-    <string name="status_connection_failed">Verbindung fehlgeschlagen — nochmal versuchen.</string>
-    <string name="status_permissions_required">Für die Suche nach Geräten in der Nähe werden Berechtigungen benötigt.</string>
-    <string name="status_no_lan">Kein WLAN erkannt — Beitritt nur über \"Spiel in der Nähe suchen\" auf einem anderen Android-Gerät möglich.</string>
+    <string name="btn_host">Start as host</string>
+    <string name="btn_join">Find a game nearby</string>
+    <string name="btn_continue_to_game">Continue to game</string>
+    <string name="qr_content_description">QR code to join via browser</string>
+    <string name="status_hosting">Host running — other devices can now join (via Nearby, or via browser/QR code below if on the same Wi-Fi).</string>
+    <string name="status_discovering">Looking for hosts nearby…</string>
+    <string name="status_connecting">Connecting…</string>
+    <string name="status_connection_failed">Connection failed — try again.</string>
+    <string name="status_permissions_required">Permissions are needed to search for nearby devices.</string>
+    <string name="status_no_lan">No Wi-Fi detected — joining is only possible via \"Find a game nearby\" on another Android device.</string>
+    <string name="status_connected_to">Connected: %1$s</string>
+    <string name="player_fallback_name">Player</string>
+    <string name="notification_channel_host">Partey Timeline Host</string>
+    <string name="host_fallback_name">Partey Host</string>
+    <string name="notification_text_hosting">Running — other devices can now join</string>
+    <string name="lang_switch_content_description">Switch language</string>
 </resources>

@@ -11,3 +11,9 @@ app/libnode/
 
 # Populated by the :app:syncNodeProject Gradle task from the repo root at build time.
 app/src/main/assets/nodejs-project/
+
+# Release signing key — irreplaceable, never commit. See keystore/PASSWORDS_DO_NOT_COMMIT.txt.
+keystore/
+
+# Local release-signing credentials for build.gradle.kts (see gradle.properties.example).
+signing.properties

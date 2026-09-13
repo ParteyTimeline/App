@@ -60,6 +60,14 @@ header.top{
 .who{font-family:'Space Mono',monospace;font-size:13px;display:flex;align-items:center;gap:10px;}
 .who .name{font-weight:700;}
 
+.lang-switch{display:flex;gap:4px;}
+.lang-opt{
+  appearance:none;border:2px solid var(--ink);background:var(--surface);color:var(--ink);
+  font-family:'Space Mono',monospace;font-size:11px;font-weight:700;letter-spacing:0.5px;
+  padding:4px 9px;border-radius:999px;cursor:pointer;
+}
+.lang-opt.active{background:var(--ink);color:var(--surface);}
+
 /* ---- Buttons ---- */
 .btn{
   appearance:none;border:2px solid var(--ink);background:var(--surface);color:var(--ink);

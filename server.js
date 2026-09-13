@@ -80,14 +80,15 @@ app.post('/api/register', (req, res) => {
       weak_password: 'Passwort braucht mindestens 6 Zeichen',
       exists: 'Nutzername ist schon vergeben',
     };
-    res.status(400).json({ error: messages[e.code] || 'Registrierung fehlgeschlagen' });
+    const code = messages[e.code] ? e.code : 'register_failed';
+    res.status(400).json({ error: messages[e.code] || 'Registrierung fehlgeschlagen', code });
   }
 });
 
 app.post('/api/login', (req, res) => {
   const { username, password } = req.body || {};
   if (!auth.verify(username, password)) {
-    return res.status(401).json({ error: 'Nutzername oder Passwort falsch' });
+    return res.status(401).json({ error: 'Nutzername oder Passwort falsch', code: 'invalid_credentials' });
   }
   req.session.user = store.getUser(username).username;
   res.json({ username: req.session.user });
@@ -98,7 +99,7 @@ app.post('/api/logout', (req, res) => {
 });
 
 app.get('/api/me', (req, res) => {
-  if (!req.session.user) return res.status(401).json({ error: 'not_authenticated' });
+  if (!req.session.user) return res.status(401).json({ error: 'not_authenticated', code: 'not_authenticated' });
   res.json({ username: req.session.user });
 });
 
@@ -116,9 +117,11 @@ app.get('/api/playlists', auth.requireAuth, (req, res) => {
       progress: p.progress,
       note: p.note,
       error: p.error,
+      errorCode: p.errorCode,
       cacheStatus: p.cacheStatus,
       cacheProgress: p.cacheProgress,
       cacheNote: p.cacheNote,
+      cacheNoteParams: p.cacheNoteParams,
     }))
   );
 });
@@ -174,20 +177,22 @@ async function runImport(playlistId, { source, url, pasteKind, pasteText }) {
     }
 
     if (!tracks || tracks.length === 0) {
-      store.updatePlaylist(playlistId, { status: 'failed', error: 'Keine abspielbaren Songs gefunden' });
+      store.updatePlaylist(playlistId, { status: 'failed', error: 'Keine abspielbaren Songs gefunden', errorCode: 'no_playable_songs' });
       return;
     }
     const patch = { status: 'ready', tracks, note };
     if (!store.getPlaylist(playlistId).nameWasGiven && defaultName) patch.name = defaultName;
     store.updatePlaylist(playlistId, patch);
   } catch (e) {
-    store.updatePlaylist(playlistId, { status: 'failed', error: e.message || 'Import fehlgeschlagen' });
+    store.updatePlaylist(playlistId, { status: 'failed', error: e.message || 'Import fehlgeschlagen', errorCode: 'import_failed' });
   }
 }
 
 app.post('/api/playlists', auth.requireAuth, async (req, res) => {
   const { url, name } = req.body || {};
-  if (!url || !url.trim()) return res.status(400).json({ error: 'Playlist-Link oder eingefügte Liste fehlt' });
+  if (!url || !url.trim()) {
+    return res.status(400).json({ error: 'Playlist-Link oder eingefügte Liste fehlt', code: 'missing_playlist_url' });
+  }
 
   const pasteKind = detectPasteKind(url);
   let source = null;
@@ -201,23 +206,30 @@ app.post('/api/playlists', auth.requireAuth, async (req, res) => {
   } else {
     source = detectSource(url);
     if (!source) {
-      return res.status(400).json({ error: 'Nicht erkannt — Link (Deezer/Spotify/YouTube), Exportify-CSV oder kopierte Spotify-Songliste einfügen' });
+      return res.status(400).json({
+        error: 'Nicht erkannt — Link (Deezer/Spotify/YouTube), Exportify-CSV oder kopierte Spotify-Songliste einfügen',
+        code: 'unrecognized_playlist_format',
+      });
     }
     try {
       if (source === 'deezer') sourceKey = 'deezer:' + (await deezer.resolveToPlaylistId(url));
       else if (source === 'spotify') sourceKey = 'spotify:' + spotify.extractPlaylistId(url);
       else if (source === 'youtube') sourceKey = 'youtube:' + youtube.extractPlaylistId(url);
     } catch (e) {
-      return res.status(400).json({ error: e.message || 'Link konnte nicht gelesen werden' });
+      return res.status(400).json({ error: e.message || 'Link konnte nicht gelesen werden', code: 'playlist_link_failed' });
     }
   }
 
   const existing = store.findPlaylistBySourceKey(sourceKey);
   if (existing && existing.status !== 'failed') {
-    return res.status(409).json({ error: `Ist schon in der Bibliothek: „${existing.name}"` });
+    return res.status(409).json({
+      error: `Ist schon in der Bibliothek: „${existing.name}"`,
+      code: 'already_in_library',
+      params: { name: existing.name },
+    });
   }
   if (importsInFlight.has(sourceKey)) {
-    return res.status(409).json({ error: 'Wird gerade schon importiert — kurz warten.' });
+    return res.status(409).json({ error: 'Wird gerade schon importiert — kurz warten.', code: 'already_importing' });
   }
 
   const playlist = {
@@ -307,15 +319,19 @@ async function runPrefetch(playlistId) {
   }, (done, total) => store.updatePlaylist(playlistId, { cacheProgress: { done, total } }));
   store.updatePlaylist(playlistId, {
     cacheStatus: failed === 0 ? 'ready' : failed === missing.length ? 'failed' : 'partial',
+    // cacheNote stays as a German fallback for anything reading the API
+    // directly; the web/Android UI prefers cacheNoteParams (see i18n.js's
+    // cache.partialNote / cache.failedNote) so it can show this in English too.
     cacheNote: failed ? `${missing.length - failed} von ${missing.length} fehlenden Vorschauen zwischengespeichert (${failed} nicht verfügbar)` : undefined,
+    cacheNoteParams: failed ? { cached: missing.length - failed, total: missing.length, unavailable: failed } : undefined,
   });
 }
 
 app.post('/api/playlists/:id/prefetch', auth.requireAuth, (req, res) => {
   const playlist = store.getPlaylist(req.params.id);
-  if (!playlist) return res.status(404).json({ error: 'Playlist nicht gefunden' });
-  if (playlist.status !== 'ready') return res.status(400).json({ error: 'Playlist ist noch nicht fertig importiert' });
-  if (prefetchInFlight.has(req.params.id)) return res.status(409).json({ error: 'Wird schon heruntergeladen' });
+  if (!playlist) return res.status(404).json({ error: 'Playlist nicht gefunden', code: 'playlist_not_found' });
+  if (playlist.status !== 'ready') return res.status(400).json({ error: 'Playlist ist noch nicht fertig importiert', code: 'playlist_not_ready' });
+  if (prefetchInFlight.has(req.params.id)) return res.status(409).json({ error: 'Wird schon heruntergeladen', code: 'already_downloading' });
   prefetchInFlight.add(req.params.id);
   res.json({ status: 'caching' });
   runPrefetch(req.params.id).finally(() => prefetchInFlight.delete(req.params.id));
@@ -366,18 +382,19 @@ app.post('/api/rooms', auth.requireAuth, (req, res) => {
 
 app.post('/api/rooms/:code/join', auth.requireAuth, (req, res) => {
   const room = rooms.getRoom(req.params.code);
-  if (!room) return res.status(404).json({ error: 'Raum nicht gefunden' });
+  if (!room) return res.status(404).json({ error: 'Raum nicht gefunden', code: 'room_not_found' });
   const alreadyIn = room.teams.some((t) => t.members.includes(req.session.user));
   // Once the game has started, only people already on a team may "join"
   // again (a reconnect after a closed tab / dead phone) — brand new
   // latecomers are still turned away.
   if (!alreadyIn && room.phase !== 'lobby') {
-    return res.status(400).json({ error: 'Das Spiel läuft schon' });
+    return res.status(400).json({ error: 'Das Spiel läuft schon', code: 'game_already_started' });
   }
   try {
     rooms.addPlayer(room, req.session.user); // no-op if already a member
   } catch (e) {
-    return res.status(400).json({ error: e.code === 'room_full' ? 'Raum ist voll' : 'Beitritt fehlgeschlagen' });
+    const code = e.code === 'room_full' ? 'room_full' : 'join_failed';
+    return res.status(400).json({ error: e.code === 'room_full' ? 'Raum ist voll' : 'Beitritt fehlgeschlagen', code });
   }
   rooms.broadcast(room);
   res.json({ code: room.code });
@@ -385,7 +402,7 @@ app.post('/api/rooms/:code/join', auth.requireAuth, (req, res) => {
 
 app.get('/api/rooms/:code', auth.requireAuth, (req, res) => {
   const room = rooms.getRoom(req.params.code);
-  if (!room) return res.status(404).json({ error: 'Raum nicht gefunden' });
+  if (!room) return res.status(404).json({ error: 'Raum nicht gefunden', code: 'room_not_found' });
   res.json(rooms.publicState(room, req.session.user));
 });
 

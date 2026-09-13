@@ -1,0 +1,8 @@
+# Copy to signing.properties (gitignored) and fill in real values to produce
+# a signed release build (gradle assembleRelease). Without this file,
+# release builds are simply unsigned — fine for local testing, not for
+# distributing an APK anyone will install updates over.
+storeFile=../keystore/release.jks
+storePassword=
+keyAlias=partey-timeline-release
+keyPassword=

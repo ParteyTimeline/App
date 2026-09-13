@@ -34,7 +34,7 @@ class HostForegroundService : Service() {
         nearbyHost = NearbyHost(
             applicationContext,
             targetPort = HOST_PORT,
-            displayName = Build.MODEL ?: "Partey-Host",
+            displayName = Build.MODEL ?: getString(com.parteytimeline.nearby.R.string.host_fallback_name),
         )
         instance = this
     }
@@ -58,14 +58,14 @@ class HostForegroundService : Service() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
                 NOTIFICATION_CHANNEL_ID,
-                "Partey Timeline Host",
+                getString(com.parteytimeline.nearby.R.string.notification_channel_host),
                 NotificationManager.IMPORTANCE_LOW,
             )
             getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
         }
         return NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_ID)
             .setContentTitle(getString(com.parteytimeline.nearby.R.string.app_name))
-            .setContentText("Läuft — andere Geräte können jetzt beitreten")
+            .setContentText(getString(com.parteytimeline.nearby.R.string.notification_text_hosting))
             .setSmallIcon(android.R.drawable.ic_media_play)
             .setOngoing(true)
             .build()

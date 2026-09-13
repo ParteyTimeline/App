@@ -1,6 +1,19 @@
+import java.io.FileInputStream
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
+}
+
+// Release-signing credentials live outside version control (see .gitignore
+// and signing.properties.example) — a debug-signed APK can't receive
+// updates once installed from elsewhere under the same signature, and the
+// release key itself is irreplaceable once anything real is signed with
+// it, so it's never something to bake into a committed Gradle file.
+val signingPropsFile = file("signing.properties")
+val signingProps = Properties().apply {
+    if (signingPropsFile.exists()) load(FileInputStream(signingPropsFile))
 }
 
 // Copies the EXISTING Node.js server (server.js/src/public/package.json/
@@ -64,6 +77,17 @@ android {
         }
     }
 
+    signingConfigs {
+        if (signingPropsFile.exists()) {
+            create("release") {
+                storeFile = file(signingProps.getProperty("storeFile"))
+                storePassword = signingProps.getProperty("storePassword")
+                keyAlias = signingProps.getProperty("keyAlias")
+                keyPassword = signingProps.getProperty("keyPassword")
+            }
+        }
+    }
+
     packaging {
         // Only one of the prebuilt libnode.so's transitive libc++_shared.so
         // copies should end up in the APK per ABI; let CMake's own resolve it.
@@ -73,6 +97,7 @@ android {
     buildTypes {
         release {
             isMinifyEnabled = false
+            if (signingPropsFile.exists()) signingConfig = signingConfigs.getByName("release")
         }
     }
     compileOptions {

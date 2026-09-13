@@ -1,0 +1,3 @@
+First release: host a Partey Timeline round with no internet and no
+external server — Nearby Connections (Bluetooth/Wi-Fi Direct) or a
+plain browser + QR code on the same Wi-Fi. English and German UI.

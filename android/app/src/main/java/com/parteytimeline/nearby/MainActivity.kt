@@ -10,7 +10,9 @@ import android.widget.ListView
 import android.widget.TextView
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
+import androidx.appcompat.app.AppCompatDelegate
 import androidx.core.content.ContextCompat
+import androidx.core.os.LocaleListCompat
 import com.parteytimeline.nearby.host.HOST_PORT
 import com.parteytimeline.nearby.host.HostForegroundService
 import com.parteytimeline.nearby.host.LanShareInfo
@@ -64,6 +66,29 @@ class MainActivity : AppCompatActivity() {
         findViewById<Button>(R.id.btnContinueToGame).setOnClickListener {
             startActivity(GameWebViewActivity.putPort(Intent(this, GameWebViewActivity::class.java), HOST_PORT))
         }
+
+        findViewById<Button>(R.id.btnLangDe).setOnClickListener { setAppLanguage("de") }
+        findViewById<Button>(R.id.btnLangEn).setOnClickListener { setAppLanguage("en") }
+        updateLangButtons()
+    }
+
+    // AppCompatDelegate persists the chosen per-app locale itself (automatic
+    // storage, no manifest/SharedPreferences work needed since appcompat
+    // 1.6.0) and recreates every AppCompatActivity in the task to apply it —
+    // mirrors the DE/EN toggle in the web UI (public/i18n.js) so both surfaces
+    // behave the same way regardless of the device's system language.
+    private fun setAppLanguage(tag: String) {
+        AppCompatDelegate.setApplicationLocales(LocaleListCompat.forLanguageTags(tag))
+    }
+
+    // Reads resources.configuration rather than AppCompatDelegate.getApplicationLocales()
+    // so this reflects whichever language is ACTUALLY in effect right now —
+    // an explicit override, or (before one is ever chosen) whatever the
+    // system locale resolved to via values-de/ vs. the values/ (English) default.
+    private fun updateLangButtons() {
+        val isGerman = resources.configuration.locales[0].language == "de"
+        findViewById<Button>(R.id.btnLangDe).isEnabled = !isGerman
+        findViewById<Button>(R.id.btnLangEn).isEnabled = isGerman
     }
 
     private fun withPermissions(action: () -> Unit) {
@@ -101,7 +126,7 @@ class MainActivity : AppCompatActivity() {
     private fun hookHostCallbacks() {
         val service = HostForegroundService.instance ?: return
         service.nearbyHost.onPeerConnected = { _, name ->
-            runOnUiThread { tvStatus.text = "${getString(R.string.status_hosting)}\nVerbunden: $name" }
+            runOnUiThread { tvStatus.text = "${getString(R.string.status_hosting)}\n${getString(R.string.status_connected_to, name)}" }
         }
     }
 
@@ -112,7 +137,7 @@ class MainActivity : AppCompatActivity() {
         discoveredHosts.clear()
         hostsAdapter.clear()
 
-        val peer = NearbyPeer(applicationContext, localDisplayName = Build.MODEL ?: "Spieler")
+        val peer = NearbyPeer(applicationContext, localDisplayName = Build.MODEL ?: getString(R.string.player_fallback_name))
         nearbyPeer = peer
         peer.onHostFound = { candidate ->
             runOnUiThread {

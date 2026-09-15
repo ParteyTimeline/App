@@ -89,5 +89,32 @@ Android 12 bzw. älter je nach OS-Version.
 - **Nur der Host hält eine Foreground-Notification** (`HostForegroundService`) — Peers
   laufen nur innerhalb der App-Lebensdauer; wird die App auf einem Peer-Gerät in den
   Hintergrund geschickt, kann die Verbindung abbrechen.
-- Reconnect nach Verbindungsabbruch, viele gleichzeitige Peers unter Last und
-  App-Icon/Branding sind bewusst nicht Teil dieser ersten Version.
+- Viele gleichzeitige Peers unter Last und App-Icon/Branding sind bewusst nicht Teil
+  dieser ersten Version.
+
+## Neuverbindung nach Verbindungsabbruch
+
+Eine Nearby-Verbindung kann aus Gründen abbrechen, die nichts mit dem Spiel selbst zu
+tun haben — ein paar Meter außerhalb der Bluetooth-/Wi-Fi-Direct-Reichweite laufen, das
+OS pausiert kurz die Funkmodule, der Bildschirm eines Peers wird gesperrt. Da der
+eigentliche Spielstand serverseitig hinter dem Session-Cookie des Hosts liegt (siehe
+`/api/local/join` in `server.js`), ist ein neuer Tunnel für die Web-App funktional
+nicht vom alten zu unterscheiden — beide Seiten erholen sich deshalb automatisch,
+statt einen manuellen Neubeitritt vom Startbildschirm zu erzwingen:
+
+- **Peer-Seite** (`nearby/NearbyPeer.kt`): Ein unerwarteter Verbindungsabbruch (kein
+  von der App selbst ausgelöster) löst automatische Neuverbindungsversuche mit
+  exponentiellem Backoff aus (1s, 2s, 4s, 8s, gedeckelt, bis zu 20 Versuche — insgesamt
+  einige Minuten) gegen denselben Host, zunächst per Endpoint-ID, sonst per Anzeigename
+  falls sich die ID des Hosts geändert hat. `GameWebViewActivity` zeigt währenddessen
+  ein "Verbinde neu…"-Banner und lädt die WebView nach erfolgreicher Neuverbindung mit
+  dem neuen Tunnel-Port neu — der lokale Port, den ein `PeerTunnelClient` bindet, kann
+  sich nach einem Abbruch ändern. Sind alle Versuche ausgeschöpft, erscheint eine
+  Fehlermeldung und es geht zurück zum Startbildschirm.
+- **Host-Seite** (`nearby/NearbyHost.kt`): Das Advertising selbst läuft über
+  Peer-Abbrüche hinweg einfach weiter, ein neu verbindender Peer sieht daher wie eine
+  ganz normale neue eingehende Verbindung aus — dafür ist keine host-seitige
+  Buchhaltung nötig. Was mit demselben Backoff neu versucht wird, ist ein
+  fehlgeschlagener (Neu-)Start des Advertisings selbst (z. B. ein vorübergehender
+  GMS-/Bluetooth-Fehler), damit der Host für neue oder neu verbindende Peers nicht
+  einfach unsichtbar bleibt.

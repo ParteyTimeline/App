@@ -1,6 +1,8 @@
 package com.parteytimeline.nearby.nearby
 
 import android.content.Context
+import android.os.Handler
+import android.os.Looper
 import android.os.ParcelFileDescriptor
 import com.google.android.gms.nearby.Nearby
 import com.google.android.gms.nearby.connection.AdvertisingOptions
@@ -33,21 +35,45 @@ const val NEARBY_SERVICE_ID = "com.parteytimeline.nearby.GAME"
  */
 class NearbyHost(context: Context, private val targetPort: Int, private val displayName: String) {
     private val client: ConnectionsClient = Nearby.getConnectionsClient(context)
+    private val handler = Handler(Looper.getMainLooper())
     private val tunnels = mutableMapOf<String, HostTunnelServer>()
     private val outgoingWriteSides = mutableMapOf<String, ParcelFileDescriptor>()
     private val endpointNames = mutableMapOf<String, String>()
+    private var stopped = false
+    private var advertisingRetryAttempt = 0
 
     var onPeerConnected: ((endpointId: String, endpointName: String) -> Unit)? = null
     var onPeerDisconnected: ((endpointId: String) -> Unit)? = null
     var onAdvertisingFailed: ((Exception) -> Unit)? = null
 
+    // Peers that drop (out of range, backgrounded, etc.) don't need any
+    // action here to be reconnectable: advertising keeps running until stop()
+    // is called, so a peer's own reconnect attempt (see NearbyPeer) just
+    // looks like a fresh incoming connection. The one failure mode that
+    // *does* need explicit recovery is advertising itself failing/dying
+    // (e.g. a transient GMS/Bluetooth error) — retried here with backoff so
+    // the host doesn't silently become invisible to new/reconnecting peers.
     fun startAdvertising() {
+        stopped = false
         val options = AdvertisingOptions.Builder().setStrategy(Strategy.P2P_STAR).build()
         client.startAdvertising(displayName, NEARBY_SERVICE_ID, connectionLifecycleCallback, options)
-            .addOnFailureListener { e -> onAdvertisingFailed?.invoke(e) }
+            .addOnSuccessListener { advertisingRetryAttempt = 0 }
+            .addOnFailureListener { e ->
+                onAdvertisingFailed?.invoke(e)
+                retryAdvertising()
+            }
+    }
+
+    private fun retryAdvertising() {
+        if (stopped || advertisingRetryAttempt >= MAX_ADVERTISING_RETRIES) return
+        advertisingRetryAttempt++
+        val delay = minOf(RETRY_BASE_DELAY_MS * (1L shl minOf(advertisingRetryAttempt - 1, 3)), RETRY_MAX_DELAY_MS)
+        handler.postDelayed({ if (!stopped) startAdvertising() }, delay)
     }
 
     fun stop() {
+        stopped = true
+        handler.removeCallbacksAndMessages(null)
         client.stopAdvertising()
         client.stopAllEndpoints()
         tunnels.values.forEach { it.stop() }
@@ -99,5 +125,11 @@ class NearbyHost(context: Context, private val targetPort: Int, private val disp
         }
 
         override fun onPayloadTransferUpdate(endpointId: String, update: PayloadTransferUpdate) {}
+    }
+
+    companion object {
+        private const val MAX_ADVERTISING_RETRIES = 10
+        private const val RETRY_BASE_DELAY_MS = 1000L
+        private const val RETRY_MAX_DELAY_MS = 8000L
     }
 }

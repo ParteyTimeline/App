@@ -88,5 +88,28 @@ Android 12 or older depending on OS version.
 - **Only the host holds a foreground notification** (`HostForegroundService`) — peers
   only run for the app's own lifetime; if the app is sent to the background on a peer
   device, the connection can drop.
-- Reconnect after a dropped connection, many simultaneous peers under load, and
-  app icon/branding are deliberately not part of this first version.
+- Many simultaneous peers under load and app icon/branding are deliberately not part
+  of this first version.
+
+## Reconnecting after a dropped connection
+
+A Nearby link can drop for reasons that have nothing to do with the game — walking a
+few meters out of Bluetooth/Wi-Fi Direct range, the OS briefly suspending radios, a
+peer's screen locking. Since the actual game state lives server-side behind the host's
+session cookie (see `/api/local/join` in `server.js`), a fresh tunnel is functionally
+indistinguishable from the old one to the web app, so both sides recover automatically
+instead of forcing a manual rejoin from the start screen:
+
+- **Peer side** (`nearby/NearbyPeer.kt`): an unexpected disconnect (not one the app
+  itself requested) triggers automatic retries with exponential backoff (1s, 2s, 4s,
+  8s, capped, up to 20 attempts — a few minutes total) against the same host, matching
+  by endpoint ID first and falling back to matching by display name if the host's own
+  ID happened to change. `GameWebViewActivity` shows a "reconnecting…" banner during
+  this and reloads the WebView against the new tunnel port once reconnected — the local
+  port a `PeerTunnelClient` binds can differ from the one before the drop. If all
+  attempts are exhausted, it shows a failure message and returns to the start screen.
+- **Host side** (`nearby/NearbyHost.kt`): advertising itself keeps running across peer
+  disconnects, so a reconnecting peer just looks like a fresh incoming connection —
+  no host-side bookkeeping needed for that. The one thing that does get retried with the
+  same backoff is advertising itself failing to (re)start (e.g. a transient GMS/Bluetooth
+  error), so the host doesn't silently become invisible to new or reconnecting peers.

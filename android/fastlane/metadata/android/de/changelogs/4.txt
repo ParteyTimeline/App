@@ -1,0 +1,3 @@
+Spiele in der Nähe erholen sich jetzt selbst nach einem Verbindungsabbruch
+(außer Reichweite laufen, gesperrter Bildschirm, Funk-Aussetzer) — kein
+manueller Neubeitritt mehr nötig.

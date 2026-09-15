@@ -1,0 +1,2 @@
+Nearby games now recover on their own after a dropped connection (walking out
+of range, a locked screen, a radio hiccup) — no more manual rejoin needed.

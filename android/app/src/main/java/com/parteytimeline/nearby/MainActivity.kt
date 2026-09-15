@@ -101,6 +101,14 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun startHosting() {
+        // Mutually exclusive with joining — a device can't be looking for a
+        // host and being one at the same time. Tear down any active
+        // discovery/connection first in case the user was just in the join
+        // screen.
+        nearbyPeer?.stopDiscovery()
+        nearbyPeer?.disconnect()
+        nearbyPeer = null
+
         val intent = Intent(this, HostForegroundService::class.java)
         ContextCompat.startForegroundService(this, intent)
 
@@ -110,6 +118,13 @@ class MainActivity : AppCompatActivity() {
         listHosts.visibility = android.view.View.GONE
         tvStatus.text = getString(R.string.status_hosting)
         window.decorView.postDelayed({ hookHostCallbacks() }, 300)
+
+        // Hosting itself needs no Wi-Fi at all (only the browser/QR join
+        // path below does) — advertising keeps running in the background
+        // via HostForegroundService regardless of which screen is in
+        // front, so the host can go straight into their own game and let
+        // Nearby peers join while the lobby sits open.
+        findViewById<Button>(R.id.btnContinueToGame).visibility = android.view.View.VISIBLE
 
         val lanIp = LanShareInfo.currentLanIp(this)
         if (lanIp != null) {
@@ -136,6 +151,13 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun startJoining() {
+        // Mutually exclusive with hosting — stop advertising/being a host
+        // first (HostForegroundService.onDestroy() tears down NearbyHost);
+        // the embedded Node server itself keeps running in this same app
+        // process either way (NodeRuntime is a one-shot, not restarted per
+        // service instance), so nothing about it needs cleanup here.
+        stopService(Intent(this, HostForegroundService::class.java))
+        findViewById<Button>(R.id.btnContinueToGame).visibility = android.view.View.GONE
         lanCard.visibility = android.view.View.GONE
         listHosts.visibility = android.view.View.VISIBLE
         tvStatus.text = getString(R.string.status_discovering)

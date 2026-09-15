@@ -91,14 +91,20 @@
                 android:layout_width="220dp"
                 android:layout_height="220dp"
                 android:contentDescription="@string/qr_content_description" />
-
-            <Button
-                android:id="@+id/btnContinueToGame"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="16dp"
-                android:text="@string/btn_continue_to_game" />
         </LinearLayout>
+
+        <!-- A sibling of lanCard, not a child of it: hosting itself doesn't
+             require Wi-Fi (only the browser/QR join path does), so this
+             must stay reachable even when lanCard is hidden for having no
+             LAN IP — otherwise a host with no Wi-Fi has no way to actually
+             continue into their own game at all. -->
+        <Button
+            android:id="@+id/btnContinueToGame"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:visibility="gone"
+            android:text="@string/btn_continue_to_game" />
 
         <ListView
             android:id="@+id/listHosts"

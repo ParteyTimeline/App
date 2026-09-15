@@ -29,6 +29,10 @@ let AUTH_ERROR = '';
 let LOBBY_ERROR = '';
 let LOBBY_NOTE = '';
 let ADDING_PLAYLIST = false;
+let IMPORTING_PLAYLIST = false;
+let MANAGE_RETURN_VIEW = 'lobby'; // where "back" on the manage-playlists screen goes
+let RENAMING_PLAYLIST_ID = null;
+let PLAYLIST_ACTION_BUSY = null; // id of a playlist mid delete/clear-cache request, to avoid a double-tap race
 
 let ROOM_STATE = null;
 let WS = null;
@@ -377,6 +381,137 @@ async function prefetchPlaylist(id) {
   }
 }
 
+function renderImportButton() {
+  return `<button class="btn ghost small" data-action="importplaylist" ${IMPORTING_PLAYLIST ? 'disabled' : ''} style="margin-top:8px;">
+    ${IMPORTING_PLAYLIST ? `<span class="spinner"></span> ${t('playlist.importing')}` : t('playlist.import')}
+  </button>`;
+}
+
+// A dynamically-created <input type="file"> rather than one baked into the
+// template: every render() replaces the DOM via innerHTML, which would
+// wipe out any in-progress file selection on a template-based input the
+// instant state changes (e.g. IMPORTING_PLAYLIST flipping true right after
+// the user picks a file).
+function triggerPlaylistImport() {
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = '.gz,.tar.gz,application/gzip';
+  input.onchange = () => {
+    const file = input.files && input.files[0];
+    if (file) importPlaylist(file);
+  };
+  input.click();
+}
+
+async function importPlaylist(file) {
+  IMPORTING_PLAYLIST = true; LOBBY_ERROR = ''; LOBBY_NOTE = ''; render();
+  try {
+    const buf = await file.arrayBuffer();
+    const res = await fetch(BASE + 'api/playlists/import', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/gzip' },
+      body: buf,
+    });
+    let data = null;
+    try { data = await res.json(); } catch (e) { /* no body */ }
+    if (!res.ok) {
+      const err = new Error((data && data.error) || t('api.genericError', { status: res.status }));
+      if (data && data.code) err.code = data.code;
+      if (data && data.params) err.params = data.params;
+      throw err;
+    }
+    LOBBY_NOTE = t('playlist.importedNote', { name: data.name, tracks: data.tracksImported, audio: data.audioRestored, covers: data.coverRestored });
+    await loadPlaylists();
+  } catch (e) {
+    LOBBY_ERROR = apiErrorMessage(e);
+  }
+  IMPORTING_PLAYLIST = false;
+  render();
+}
+
+function showManagePlaylists() {
+  MANAGE_RETURN_VIEW = VIEW === 'room' ? 'room' : 'lobby';
+  RENAMING_PLAYLIST_ID = null;
+  LOBBY_ERROR = ''; LOBBY_NOTE = '';
+  VIEW = 'managePlaylists';
+  render();
+}
+
+async function renamePlaylist(id, name) {
+  if (!name.trim()) return;
+  try {
+    await api('PATCH', `api/playlists/${id}`, { name: name.trim() });
+    RENAMING_PLAYLIST_ID = null;
+    await loadPlaylists();
+  } catch (e) {
+    LOBBY_ERROR = apiErrorMessage(e);
+  }
+  render();
+}
+
+async function clearPlaylistCache(id) {
+  if (PLAYLIST_ACTION_BUSY) return;
+  PLAYLIST_ACTION_BUSY = id; render();
+  try {
+    await api('DELETE', `api/playlists/${id}/cache`);
+    await loadPlaylists();
+  } catch (e) {
+    LOBBY_ERROR = apiErrorMessage(e);
+  }
+  PLAYLIST_ACTION_BUSY = null;
+  render();
+}
+
+async function deletePlaylist(id, name) {
+  if (PLAYLIST_ACTION_BUSY) return;
+  if (!confirm(t('playlist.deleteConfirm', { name }))) return;
+  PLAYLIST_ACTION_BUSY = id; render();
+  try {
+    await api('DELETE', `api/playlists/${id}`);
+    await loadPlaylists();
+  } catch (e) {
+    LOBBY_ERROR = apiErrorMessage(e);
+  }
+  PLAYLIST_ACTION_BUSY = null;
+  render();
+}
+
+function renderManagePlaylists() {
+  const rows = PLAYLISTS.map((p) => {
+    const busy = PLAYLIST_ACTION_BUSY === p.id;
+    const nameHtml = RENAMING_PLAYLIST_ID === p.id
+      ? `<input type="text" id="renameInput" class="manage-rename-input" value="${esc(p.name)}" autofocus>
+         <button class="btn small gold" data-action="saverename" data-id="${esc(p.id)}">${t('playlist.save')}</button>
+         <button class="btn small ghost" data-action="cancelrename">${t('playlist.cancel')}</button>`
+      : `<span class="pname">${esc(p.name)}</span>
+         <button class="btn small ghost" data-action="startrename" data-id="${esc(p.id)}">${t('playlist.rename')}</button>`;
+    const hasCache = p.cacheStatus === 'ready' || p.cacheStatus === 'partial';
+    return `
+    <div class="playlist-row manage-row">
+      ${nameHtml}
+      <span class="pmeta">${t('playlist.meta', { count: p.count, addedBy: esc(p.addedBy) })}</span>
+      ${renderCacheStatus(p)}
+      <div class="manage-row-actions">
+        <a class="btn ghost small" href="${esc(BASE)}api/playlists/${esc(p.id)}/export">${t('playlist.export')}</a>
+        ${hasCache ? `<button class="btn ghost small" data-action="clearcache" data-id="${esc(p.id)}" ${busy ? 'disabled' : ''}>${t('playlist.clearCache')}</button>` : ''}
+        <button class="btn ghost small danger" data-action="deleteplaylist" data-id="${esc(p.id)}" data-name="${esc(p.name)}" ${busy ? 'disabled' : ''}>${t('playlist.delete')}</button>
+      </div>
+    </div>`;
+  }).join('');
+
+  return `
+  ${renderHeader()}
+  ${LOBBY_ERROR ? `<div class="error-msg">${esc(LOBBY_ERROR)}</div>` : ''}
+  ${LOBBY_NOTE ? `<div class="hint-msg" style="margin-bottom:16px;">${esc(LOBBY_NOTE)}</div>` : ''}
+  <div class="card">
+    <h2>${t('playlist.manageTitle')}</h2>
+    <p class="lead">${t('playlist.manageLead')}</p>
+    ${renderImportButton()}
+    <div class="playlist-list manage-list">${PLAYLISTS.length ? rows : `<p class="hint-msg">${t('playlist.empty')}</p>`}</div>
+    <button class="btn ghost" data-action="backfrommanage">${t('playlist.back')}</button>
+  </div>`;
+}
+
 // ---------------- auth actions ----------------
 
 async function doAuth(mode, username, password) {
@@ -493,6 +628,22 @@ function connectRoom(code) {
       // even though the sound isn't coming from my device.
       remotePlaying = !!msg.playing;
       render();
+    } else if (msg.type === 'hostStopped') {
+      // Local/Nearby only (see server.js's /api/local/host-control) — the
+      // host explicitly stopped hosting while I was in their room. Land
+      // back on the same "waiting for the host" screen already used
+      // between rounds, rather than the plain WS auto-reconnect (which
+      // would just resubscribe to the same, now-abandoned room) — the
+      // right fallback for a non-Android browser guest (LAN/QR join),
+      // which has no native app screen to return to.
+      leaveRoom();
+      // The Android app's own WebView (host or guest) additionally has an
+      // actual start screen to fall back to — see GameWebViewActivity's
+      // AndroidLocalBridge — rather than sitting on the web "waiting"
+      // screen with no way back to Nearby hosting/joining at all.
+      if (window.AndroidLocalBridge && window.AndroidLocalBridge.hostStopped) {
+        window.AndroidLocalBridge.hostStopped();
+      }
     } else if (msg.type === 'error') {
       const known = ['spot_taken', 'already_challenged', 'no_tokens', 'cannot_challenge_own_turn', 'no_playlists_selected', 'need_more_teams'];
       wsErrorMsg = known.includes(msg.message) ? t('err.' + msg.message) : '';
@@ -538,6 +689,7 @@ function render() {
   else if (VIEW === 'localName') app.innerHTML = renderLocalName();
   else if (VIEW === 'lobby') app.innerHTML = renderLobby();
   else if (VIEW === 'room') app.innerHTML = renderRoom();
+  else if (VIEW === 'managePlaylists') app.innerHTML = renderManagePlaylists();
   bindEvents();
 }
 
@@ -710,7 +862,8 @@ function renderLobby() {
           ${ADDING_PLAYLIST ? `<span class="spinner"></span> ${t('playlist.starting')}` : t('lobby.addButton')}
         </button>
       </div>
-      <p class="hint-msg" style="margin-top:-10px;margin-bottom:22px;">${t('lobby.spotifyHint')}</p>
+      <p class="hint-msg">${t('lobby.spotifyHint')}</p>
+      <button class="btn ghost small" data-action="showmanageplaylists" style="margin-top:12px;margin-bottom:22px;">${t('playlist.manageLink')}</button>
 
       <div class="field-label">${t('lobby.teamCountLabel')}</div>
       <div class="target-row">${teamHtml}</div>
@@ -830,6 +983,7 @@ function renderRoomLobby(s) {
         ${ADDING_PLAYLIST ? `<span class="spinner"></span> ${t('playlist.starting')}` : t('lobby.addButton')}
       </button>
     </div>
+    <button class="btn ghost small" data-action="showmanageplaylists">${t('playlist.manageLink')}</button>
   </div>`;
 }
 
@@ -1128,6 +1282,19 @@ function bindEvents() {
       e.preventDefault(); // button can sit inside a <label> (selection checkbox) — don't also toggle that
       prefetchPlaylist(btn.dataset.id);
     }
+    else if (action === 'importplaylist') {
+      triggerPlaylistImport();
+    }
+    else if (action === 'showmanageplaylists') { showManagePlaylists(); }
+    else if (action === 'backfrommanage') { VIEW = MANAGE_RETURN_VIEW; render(); }
+    else if (action === 'startrename') { RENAMING_PLAYLIST_ID = btn.dataset.id; render(); }
+    else if (action === 'cancelrename') { RENAMING_PLAYLIST_ID = null; render(); }
+    else if (action === 'saverename') {
+      const input = document.getElementById('renameInput');
+      if (input) renamePlaylist(btn.dataset.id, input.value);
+    }
+    else if (action === 'clearcache') { clearPlaylistCache(btn.dataset.id); }
+    else if (action === 'deleteplaylist') { deletePlaylist(btn.dataset.id, btn.dataset.name); }
     else if (action === 'target') { TARGET = parseInt(btn.dataset.t, 10); render(); }
     else if (action === 'teamcount') { TEAM_COUNT = parseInt(btn.dataset.t, 10); render(); }
     else if (action === 'bonusmode') { BONUS_MODE = btn.dataset.mode; render(); }

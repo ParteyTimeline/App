@@ -132,6 +132,10 @@ input:focus-visible, select:focus-visible, textarea:focus-visible{outline:none;b
 .playlist-row .import-bar i{display:block;height:100%;background:var(--teal);border-radius:4px;transition:width .3s ease;}
 .playlist-row.importing{border-style:dashed;}
 .playlist-row.failed{border-color:var(--wine);opacity:0.85;}
+.manage-row-actions{flex-basis:100%;display:flex;gap:8px;flex-wrap:wrap;margin-top:4px;}
+.manage-rename-input{flex:1;min-width:160px;padding:6px 10px;border-radius:8px;border:2px solid var(--line);background:var(--surface);color:var(--ink);font-weight:700;}
+.btn.danger{border-color:var(--coral-ink);color:var(--coral-ink);}
+.manage-list{max-height:none;}
 .add-playlist-row{display:flex;gap:8px;margin-bottom:8px;flex-wrap:wrap;}
 .add-playlist-row textarea{flex:1;min-width:220px;}
 .target-row{display:flex;gap:10px;margin-bottom:22px;flex-wrap:wrap;align-items:center;}

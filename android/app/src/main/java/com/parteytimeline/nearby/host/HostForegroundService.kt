@@ -7,9 +7,12 @@ import android.app.Service
 import android.content.Intent
 import android.os.Build
 import android.os.IBinder
+import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.parteytimeline.nearby.nearby.NearbyHost
 import com.parteytimeline.nearby.node.NodeRuntime
+import java.net.HttpURLConnection
+import java.net.URL
 
 const val HOST_PORT = 3000
 private const val NOTIFICATION_CHANNEL_ID = "partey_host"
@@ -43,16 +46,49 @@ class HostForegroundService : Service() {
         startForeground(NOTIFICATION_ID, buildNotification())
         nodeRuntime.startIfNeeded(HOST_PORT)
         nearbyHost.startAdvertising()
+        setLocalJoinEnabled(true)
         return START_STICKY
     }
 
     override fun onDestroy() {
         nearbyHost.stop()
+        // The embedded server itself keeps running (see NodeRuntime.kt) even
+        // though hosting is "stopped" — this closes the one door still open
+        // to it: new devices finding/joining via /api/local/join, and kicks
+        // anyone already connected through it (a LAN/QR browser guest;
+        // nearbyHost.stop() above already handles Nearby peers via
+        // stopAllEndpoints()).
+        setLocalJoinEnabled(false)
         if (instance === this) instance = null
         super.onDestroy()
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
+
+    // Fire-and-forget: the embedded server is always already up by the time
+    // either call happens (it's never actually stopped, only advertising/
+    // joining toggles), so there's no startup race to retry around — and
+    // nothing here is worth blocking this service's lifecycle callbacks on.
+    private fun setLocalJoinEnabled(active: Boolean) {
+        val token = nodeRuntime.controlToken
+        Thread({
+            try {
+                (URL("http://127.0.0.1:$HOST_PORT/api/local/host-control").openConnection() as HttpURLConnection).apply {
+                    requestMethod = "POST"
+                    setRequestProperty("Content-Type", "application/json")
+                    setRequestProperty("X-Local-Control-Token", token)
+                    doOutput = true
+                    connectTimeout = 3000
+                    readTimeout = 3000
+                    outputStream.use { it.write("{\"active\":$active}".toByteArray()) }
+                    responseCode // forces the request to actually execute
+                    disconnect()
+                }
+            } catch (e: Exception) {
+                Log.w("PT-HostForegroundService", "setLocalJoinEnabled($active) failed", e)
+            }
+        }, "local-join-toggle").start()
+    }
 
     private fun buildNotification(): Notification {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {

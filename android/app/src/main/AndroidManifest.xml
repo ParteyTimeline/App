@@ -51,6 +51,13 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
+    <!-- Only for exporting a playlist (see GameWebViewActivity's
+         DownloadListener) to the real shared Downloads folder on API 26-28
+         — scoped storage makes DownloadManager writes to that folder exempt
+         from needing this on 29+, so it's requested at runtime, lazily,
+         only on the older range and only if the user actually exports. -->
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />
+
     <application
         android:allowBackup="false"
         android:icon="@mipmap/ic_launcher"

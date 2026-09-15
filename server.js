@@ -1,4 +1,5 @@
 const crypto = require('crypto');
+const fs = require('fs');
 const http = require('http');
 const path = require('path');
 
@@ -13,6 +14,7 @@ const youtube = require('./src/youtube');
 const { streamPreview, createClip } = require('./src/youtube-audio');
 const audioCache = require('./src/audio-cache');
 const coverCache = require('./src/cover-cache');
+const playlistArchive = require('./src/playlist-archive');
 const rooms = require('./src/rooms');
 const attachWebSocket = require('./src/ws');
 
@@ -237,6 +239,12 @@ app.post('/api/playlists', auth.requireAuth, async (req, res) => {
     id: existing ? existing.id : crypto.randomUUID(),
     source: source || (pasteKind === 'exportify-csv' ? 'spotify-csv' : 'spotify-paste'),
     sourceKey,
+    // Only meaningful for a real link (source is set) — for a pasted CSV/
+    // track list, `url` here actually holds the pasted text itself, not a
+    // single URL, so there's nothing sensible to keep as "the" source link.
+    // Stored for its own sake (re-sync later, knowing where a playlist
+    // came from) — nothing currently reads it back.
+    sourceUrl: source ? url.trim() : undefined,
     name: name || 'Wird geladen …',
     nameWasGiven: !!name,
     addedBy: req.session.user,
@@ -397,6 +405,151 @@ app.get('/api/track/:id/cover', auth.requireAuth, (req, res) => {
   res.redirect(302, url);
 });
 
+// ---------- playlist import/export ----------
+// Bundles a playlist's metadata plus any locally cached audio/cover files
+// (see audio-cache.js/cover-cache.js) into one .tar.gz — moving a playlist
+// this way (instead of re-adding the source link) also moves its offline
+// cache, so the target instance doesn't need to redo the network-heavy
+// import + "download for offline" prefetch to be ready for Nearby play.
+// The archive's cache filenames are exactly what audioCache/coverCache's
+// own cachePath() would produce for each track id, so import can look them
+// up directly without needing a separate manifest of what's included.
+function audioEntryName(id) { return 'audio/' + path.basename(audioCache.cachePath(id)); }
+function coverEntryName(id) { return 'covers/' + path.basename(coverCache.cachePath(id)); }
+
+app.get('/api/playlists/:id/export', auth.requireAuth, (req, res) => {
+  const playlist = store.getPlaylist(req.params.id);
+  if (!playlist) return res.status(404).json({ error: 'Playlist nicht gefunden', code: 'playlist_not_found' });
+
+  const meta = { formatVersion: 1, name: playlist.name, source: playlist.source, sourceUrl: playlist.sourceUrl, tracks: playlist.tracks };
+  const entries = [{ name: 'playlist.json', data: Buffer.from(JSON.stringify(meta, null, 2), 'utf8') }];
+  for (const t of playlist.tracks) {
+    const id = String(t.id);
+    if (audioCache.isCached(id)) entries.push({ name: audioEntryName(id), data: fs.readFileSync(audioCache.cachePath(id)) });
+    if (coverCache.isCached(id)) entries.push({ name: coverEntryName(id), data: fs.readFileSync(coverCache.cachePath(id)) });
+  }
+
+  const archive = playlistArchive.buildTarGz(entries);
+  const safeName = (playlist.name || 'playlist').replace(/[^a-zA-Z0-9_\- ]+/g, '').trim().slice(0, 60) || 'playlist';
+  res.set({
+    'Content-Type': 'application/gzip',
+    'Content-Disposition': `attachment; filename="${safeName}.ptplaylist.tar.gz"`,
+  });
+  res.send(archive);
+});
+
+// Accepts the raw archive body directly (not multipart/form-data) — Express's
+// built-in express.raw() handles that with no extra dependency, and the
+// client just sends the File's own bytes as the request body (see
+// public/app.js's importPlaylist).
+app.post('/api/playlists/import', auth.requireAuth, express.raw({ type: 'application/gzip', limit: '250mb' }), (req, res) => {
+  if (!Buffer.isBuffer(req.body) || !req.body.length) {
+    return res.status(400).json({ error: 'Keine Datei erhalten', code: 'empty_upload' });
+  }
+  let entries;
+  try {
+    entries = playlistArchive.parseTarGz(req.body);
+  } catch (e) {
+    return res.status(400).json({ error: 'Datei ist keine gültige .tar.gz-Playlist-Exportdatei', code: 'invalid_archive' });
+  }
+  const metaEntry = entries.find((e) => e.name === 'playlist.json');
+  if (!metaEntry) return res.status(400).json({ error: 'playlist.json fehlt im Archiv', code: 'invalid_archive' });
+  let meta;
+  try {
+    meta = JSON.parse(metaEntry.data.toString('utf8'));
+  } catch (e) {
+    return res.status(400).json({ error: 'playlist.json im Archiv ist beschädigt', code: 'invalid_archive' });
+  }
+  if (!Array.isArray(meta.tracks) || meta.tracks.length === 0) {
+    return res.status(400).json({ error: 'Keine Songs im Archiv', code: 'empty_playlist' });
+  }
+
+  const playlist = {
+    id: crypto.randomUUID(),
+    source: meta.source || 'import',
+    sourceKey: 'import:' + crypto.randomUUID(), // never collides with a live (re-)import of the same original playlist
+    sourceUrl: meta.sourceUrl,
+    name: meta.name || 'Importierte Playlist',
+    nameWasGiven: true,
+    addedBy: req.session.user,
+    addedAt: Date.now(),
+    tracks: meta.tracks,
+    status: 'ready',
+  };
+  store.addPlaylist(playlist);
+
+  const byName = new Map(entries.map((e) => [e.name, e.data]));
+  let audioRestored = 0;
+  let coverRestored = 0;
+  for (const t of meta.tracks) {
+    const id = String(t.id);
+    const audioData = byName.get(audioEntryName(id));
+    if (audioData && !audioCache.isCached(id)) {
+      audioCache.cacheFromBuffer(id, audioData);
+      audioRestored++;
+    }
+    const coverData = byName.get(coverEntryName(id));
+    if (coverData && !coverCache.isCached(id)) {
+      coverCache.cacheFromBuffer(id, coverData);
+      coverRestored++;
+    }
+  }
+  if (audioRestored > 0) {
+    store.updatePlaylist(playlist.id, {
+      cacheStatus: audioRestored === meta.tracks.length ? 'ready' : 'partial',
+      cacheProgress: { done: audioRestored, total: meta.tracks.length },
+    });
+  }
+  res.json({ id: playlist.id, name: playlist.name, status: 'ready', tracksImported: meta.tracks.length, audioRestored, coverRestored });
+});
+
+app.patch('/api/playlists/:id', auth.requireAuth, (req, res) => {
+  const playlist = store.getPlaylist(req.params.id);
+  if (!playlist) return res.status(404).json({ error: 'Playlist nicht gefunden', code: 'playlist_not_found' });
+  const name = String((req.body || {}).name || '').trim();
+  if (!name) return res.status(400).json({ error: 'Name fehlt', code: 'missing_name' });
+  store.updatePlaylist(playlist.id, { name, nameWasGiven: true });
+  res.json({ id: playlist.id, name });
+});
+
+// Audio/cover cache files are keyed only by track id (see audio-cache.js/
+// cover-cache.js), not per-playlist — the same song can legitimately be in
+// several playlists at once. Only remove a track's cache file once no
+// *other* playlist still references that id, so clearing/deleting one
+// playlist never breaks offline playback for another that happens to share
+// a song with it.
+function trackUsedElsewhere(id, excludePlaylistId) {
+  return store.listPlaylists().some((p) => p.id !== excludePlaylistId && p.tracks.some((t) => String(t.id) === id));
+}
+
+app.delete('/api/playlists/:id/cache', auth.requireAuth, (req, res) => {
+  const playlist = store.getPlaylist(req.params.id);
+  if (!playlist) return res.status(404).json({ error: 'Playlist nicht gefunden', code: 'playlist_not_found' });
+  for (const t of playlist.tracks) {
+    const id = String(t.id);
+    if (!trackUsedElsewhere(id, playlist.id)) {
+      audioCache.remove(id);
+      coverCache.remove(id);
+    }
+  }
+  store.updatePlaylist(playlist.id, { cacheStatus: undefined, cacheProgress: undefined, cacheNote: undefined, cacheNoteParams: undefined });
+  res.json({ ok: true });
+});
+
+app.delete('/api/playlists/:id', auth.requireAuth, (req, res) => {
+  const playlist = store.getPlaylist(req.params.id);
+  if (!playlist) return res.status(404).json({ error: 'Playlist nicht gefunden', code: 'playlist_not_found' });
+  for (const t of playlist.tracks) {
+    const id = String(t.id);
+    if (!trackUsedElsewhere(id, playlist.id)) {
+      audioCache.remove(id);
+      coverCache.remove(id);
+    }
+  }
+  store.removePlaylist(playlist.id);
+  res.json({ ok: true });
+});
+
 // ---------- rooms ----------
 
 app.post('/api/rooms', auth.requireAuth, (req, res) => {
@@ -448,7 +601,48 @@ app.post('/api/rooms/:code/join', auth.requireAuth, (req, res) => {
 // can't hijack someone else's name, and the original device transparently
 // resumes under it (including into a room the host starts *after* this
 // one, e.g. the next round) without retyping anything.
+// Lets the Android app stop new devices from finding/joining its local
+// game without actually killing the embedded server (nodejs-mobile can't
+// cleanly stop-and-later-restart node::Start() within one process — see
+// NodeRuntime.kt) — e.g. when the user switches from hosting to looking
+// for a game themselves. Guarded by a random per-process token (see
+// NodeRuntime.kt's controlToken) rather than anything session/IP-based:
+// a Nearby peer's tunneled requests are indistinguishable from the host
+// app's own by IP alone (both arrive as 127.0.0.1, see HostTunnelServer),
+// and this must be unreachable by anyone but the app itself — a browser on
+// the same Wi-Fi or a Nearby peer could otherwise grief the host by
+// toggling their own game on/off.
+let localJoinEnabled = true;
+
+app.post('/api/local/host-control', (req, res) => {
+  const token = process.env.LOCAL_CONTROL_TOKEN;
+  if (!token || req.headers['x-local-control-token'] !== token) {
+    return res.status(403).json({ error: 'Nicht erlaubt', code: 'forbidden' });
+  }
+  localJoinEnabled = !!(req.body || {}).active;
+  // Disabling doesn't just block new joins — anyone already in via a plain
+  // LAN/QR browser connection stays connected indefinitely otherwise (only
+  // Nearby peers get disconnected automatically, via nearbyHost.stop() ->
+  // stopAllEndpoints() on the Android side). Tell each socket why before
+  // closing it so the client lands on the same "waiting for the host"
+  // screen already used between rounds, rather than its normal WS
+  // auto-reconnect just resubscribing to the same, now-abandoned room.
+  if (!localJoinEnabled) {
+    const room = rooms.mostRecentRoom();
+    if (room) {
+      for (const sock of Array.from(room.sockets)) {
+        if (sock.readyState === 1) sock.send(JSON.stringify({ type: 'hostStopped' }));
+        sock.close();
+      }
+    }
+  }
+  res.json({ active: localJoinEnabled });
+});
+
 app.post('/api/local/join', (req, res) => {
+  if (!localJoinEnabled) {
+    return res.status(503).json({ error: 'Hosting ist gerade gestoppt', code: 'local_hosting_stopped' });
+  }
   const room = rooms.mostRecentRoom();
 
   if (req.session.user) {

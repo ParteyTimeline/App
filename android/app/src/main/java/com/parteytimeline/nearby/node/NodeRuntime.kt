@@ -27,6 +27,18 @@ class NodeRuntime(private val context: Context) {
         private var started = false
     }
 
+    // A fresh random secret per app-process lifetime (deliberately NOT
+    // persisted — nothing needs it to survive a restart, and not persisting
+    // it keeps its exposure to only this one running process). Only
+    // HostForegroundService, which reads this property directly, and the
+    // Node process it's handed to via process.env below, ever see it —
+    // guards /api/local/host-control (see server.js), a management
+    // endpoint that must be unreachable by anyone else who can talk to this
+    // server: a browser on the same Wi-Fi, or a Nearby peer, whose tunneled
+    // requests are indistinguishable from the app's own by IP alone (both
+    // arrive as 127.0.0.1 — see HostTunnelServer).
+    val controlToken: String = ByteArray(32).let { SecureRandom().nextBytes(it); it.joinToString("") { b -> "%02x".format(b) } }
+
     private external fun startNodeWithArguments(arguments: Array<String>): Int
 
     /**
@@ -91,6 +103,7 @@ class NodeRuntime(private val context: Context) {
             "process.env.PORT = '$port';\n" +
                 "process.env.SESSION_SECRET = ${jsString(secret)};\n" +
                 "process.env.COOKIE_SECURE = '0';\n" +
+                "process.env.LOCAL_CONTROL_TOKEN = ${jsString(controlToken)};\n" +
                 "require('./server.js');\n"
         )
     }

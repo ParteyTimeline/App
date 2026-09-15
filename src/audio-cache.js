@@ -20,6 +20,11 @@ function isCached(trackId) {
   return fs.existsSync(cachePath(trackId));
 }
 
+function remove(trackId) {
+  const p = cachePath(trackId);
+  if (fs.existsSync(p)) fs.unlinkSync(p);
+}
+
 function writeAtomic(trackId, buffer) {
   ensureCacheDir();
   const dest = cachePath(trackId);
@@ -67,4 +72,4 @@ function serveCached(trackId, req, res) {
   fs.createReadStream(file).pipe(res);
 }
 
-module.exports = { CACHE_DIR, isCached, cachePath, cacheFromUrl, cacheFromBuffer, serveCached };
+module.exports = { CACHE_DIR, isCached, cachePath, cacheFromUrl, cacheFromBuffer, serveCached, remove };

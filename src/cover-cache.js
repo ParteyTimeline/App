@@ -20,6 +20,11 @@ function isCached(trackId) {
   return fs.existsSync(cachePath(trackId));
 }
 
+function remove(trackId) {
+  const p = cachePath(trackId);
+  if (fs.existsSync(p)) fs.unlinkSync(p);
+}
+
 function writeAtomic(trackId, buffer) {
   ensureCacheDir();
   const dest = cachePath(trackId);
@@ -42,6 +47,12 @@ async function cacheFromUrl(trackId, url) {
   return writeAtomic(trackId, buf);
 }
 
+// Used to restore a cover from a playlist export archive (see server.js's
+// /api/playlists/import) without re-fetching it from the live CDN.
+function cacheFromBuffer(trackId, buffer) {
+  return writeAtomic(trackId, buffer);
+}
+
 // Deezer/Spotify cover URLs are effectively always JPEG in practice, but
 // sniff the actual bytes rather than trust that — cheap, and avoids ever
 // serving the wrong Content-Type if that changes.
@@ -58,4 +69,4 @@ function serveCached(trackId, res) {
   res.send(buf);
 }
 
-module.exports = { CACHE_DIR, isCached, cachePath, cacheFromUrl, serveCached };
+module.exports = { CACHE_DIR, isCached, cachePath, cacheFromUrl, cacheFromBuffer, serveCached, remove };

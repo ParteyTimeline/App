@@ -27,6 +27,11 @@ object NearbyPermissions {
             Manifest.permission.BLUETOOTH_ADVERTISE,
             Manifest.permission.BLUETOOTH_CONNECT,
             Manifest.permission.NEARBY_WIFI_DEVICES,
+            // NEARBY_WIFI_DEVICES only covers the Wi-Fi mediums — Nearby
+            // Connections' BLE medium still goes through the classic
+            // location-gated scan path regardless of Android version (see
+            // AndroidManifest.xml's ACCESS_COARSE_LOCATION comment).
+            Manifest.permission.ACCESS_COARSE_LOCATION,
             Manifest.permission.POST_NOTIFICATIONS, // needed to show the host's foreground-service notification
         )
         Build.VERSION.SDK_INT == 32 -> arrayOf(
@@ -34,6 +39,7 @@ object NearbyPermissions {
             Manifest.permission.BLUETOOTH_ADVERTISE,
             Manifest.permission.BLUETOOTH_CONNECT,
             Manifest.permission.NEARBY_WIFI_DEVICES,
+            Manifest.permission.ACCESS_COARSE_LOCATION,
         )
         Build.VERSION.SDK_INT == 31 -> arrayOf(
             Manifest.permission.BLUETOOTH_SCAN,

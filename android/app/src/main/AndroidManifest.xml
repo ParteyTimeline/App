@@ -22,7 +22,15 @@
     <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
     <uses-permission android:maxSdkVersion="30" android:name="android.permission.BLUETOOTH" />
     <uses-permission android:maxSdkVersion="30" android:name="android.permission.BLUETOOTH_ADMIN" />
-    <uses-permission android:maxSdkVersion="28" android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <!-- Google's own guide caps this at maxSdkVersion="28" (superseded by
+         ACCESS_FINE_LOCATION 29-31, then NEARBY_WIFI_DEVICES 32+) — but real
+         on-device testing (Android 13, API 33) showed startDiscovery() still
+         failing with ApiException 8034 (MISSING_PERMISSION_
+         ACCESS_COARSE_LOCATION) even with NEARBY_WIFI_DEVICES granted.
+         NEARBY_WIFI_DEVICES only covers Nearby Connections' Wi-Fi-based
+         mediums; its BLE medium still goes through the classic
+         location-gated scan path regardless of Android version. -->
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:minSdkVersion="29" android:maxSdkVersion="31" android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:minSdkVersion="31" android:name="android.permission.BLUETOOTH_ADVERTISE" />
     <uses-permission android:minSdkVersion="31" android:name="android.permission.BLUETOOTH_CONNECT" />

@@ -31,6 +31,22 @@ jobs:
           distribution: temurin
           java-version: '17'
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      # Populates node_modules at the repo root — :app:syncNodeProject (see
+      # android/app/build.gradle.kts) copies it verbatim into Android assets
+      # so the embedded server has its dependencies on-device. Without this,
+      # the Sync task's node_modules/** include silently matches nothing (no
+      # error), and the app crashes at first launch with a plain
+      # "Cannot find module 'express'" — missing here bit every CI-built
+      # release so far, since only local/podman builds ever had node_modules
+      # already present from the checked-out working tree.
+      - name: Install server dependencies
+        run: npm ci
+
       # NDK/CMake versions pinned to match android/app/build.gradle.kts
       # exactly (compileSdk/build-tools come from the preinstalled SDK on
       # GitHub's runner image; only these two need an explicit install).

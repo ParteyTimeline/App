@@ -71,6 +71,25 @@ meant to sit behind a reverse proxy, see below. User and playlist data live in
 not** — sessions only live in the process's memory; after a restart everyone has to log
 in again (accounts themselves are preserved).
 
+### Using the published image instead of building
+
+Every `android-v*` release also publishes a matching image to GitHub Container
+Registry — pulling `ghcr.io/parteytimeline/app` skips building the `Dockerfile`
+yourself:
+
+```bash
+docker run -d --name partey-timeline \
+  --env-file .env \
+  -p 127.0.0.1:4001:3000 \
+  -v "$(pwd)/data:/app/data" \
+  ghcr.io/parteytimeline/app:latest
+```
+
+`:latest` always points at the newest release; pin a specific version instead with
+e.g. `ghcr.io/parteytimeline/app:0.5.1` (the tag matches the app's `android-vX.Y.Z`
+release, without the `android-v` prefix). With `docker-compose.yml`, replace `build: .`
+with `image: ghcr.io/parteytimeline/app:latest` to get the same effect.
+
 ## Configuration
 
 All options (see `.env.example` for details and examples):

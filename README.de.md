@@ -69,6 +69,26 @@ zum Dahinterschalten eines Reverse Proxies, siehe unten. Nutzer- und Playlist-Da
 leben nur im Arbeitsspeicher des Prozesses; nach einem Neustart müssen sich alle neu einloggen
 (Accounts selbst bleiben erhalten).
 
+### Das veröffentlichte Image statt selbst zu bauen
+
+Jedes `android-v*`-Release veröffentlicht auch ein passendes Image in der GitHub
+Container Registry — `ghcr.io/parteytimeline/app` zu ziehen spart das eigene
+Bauen des `Dockerfile`:
+
+```bash
+docker run -d --name partey-timeline \
+  --env-file .env \
+  -p 127.0.0.1:4001:3000 \
+  -v "$(pwd)/data:/app/data" \
+  ghcr.io/parteytimeline/app:latest
+```
+
+`:latest` zeigt immer auf das neueste Release; eine bestimmte Version stattdessen mit
+z. B. `ghcr.io/parteytimeline/app:0.5.1` fixieren (der Tag entspricht dem
+`android-vX.Y.Z`-Release der App, ohne das `android-v`-Präfix). In `docker-compose.yml`
+`build: .` durch `image: ghcr.io/parteytimeline/app:latest` ersetzen, um dasselbe zu
+erreichen.
+
 ## Konfiguration
 
 Alle Optionen (siehe `.env.example` für Details und Beispiele):

@@ -1,0 +1,3 @@
+Einen weiteren Berechtigungsfehler (ACCESS_COARSE_LOCATION) behoben,
+der Hosts auf Android 13 und neuer trotz des letzten WLAN-Fixes immer
+noch am Auffinden hinderte.

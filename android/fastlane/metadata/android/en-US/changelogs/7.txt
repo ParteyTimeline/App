@@ -1,0 +1,3 @@
+Fixed another missing-permission bug (ACCESS_COARSE_LOCATION) that
+still kept hosts from being found on Android 13 and newer, on top of
+last release's Wi-Fi permission fix.

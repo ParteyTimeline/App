@@ -1,0 +1,4 @@
+Keine App-Änderungen — dieses Release existiert, um für diese Version
+erstmals ein Docker-Image unter ghcr.io/parteytimeline/app zu
+veröffentlichen (siehe README für Selbst-Hoster, die das Image lieber
+ziehen als selbst zu bauen).

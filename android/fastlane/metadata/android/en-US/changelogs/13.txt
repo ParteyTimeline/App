@@ -1,0 +1,3 @@
+No app changes — this release exists to publish this version's Docker
+image to ghcr.io/parteytimeline/app for the first time (see the README
+for self-hosters who'd rather pull the image than build it themselves).

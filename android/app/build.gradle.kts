@@ -54,8 +54,8 @@ android {
         applicationId = "com.parteytimeline.nearby"
         minSdk = 26 // covers effectively all real devices in use; simplifies the Nearby Connections permission model
         targetSdk = 34
-        versionCode = 12
-        versionName = "0.5.1"
+        versionCode = 13
+        versionName = "0.5.2"
 
         externalNativeBuild {
             cmake {

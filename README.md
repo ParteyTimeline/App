@@ -109,6 +109,32 @@ be on Wi-Fi, via a plain browser and QR code (also works for iPhones/laptops, no
 install needed). Details, setup, and known limitations:
 [`android/README.md`](android/README.md).
 
+### Tutorial: download, install, and start a game
+
+1. **Download the APK.** Grab `app-release.apk` from the
+   [latest release](https://github.com/ParteyTimeline/App/releases/latest) on the
+   Android phone that will act as the host, and open the downloaded file.
+2. **Allow the install.** Since this isn't a Play Store app, Android will ask you to
+   allow installing "unknown apps" the first time — for a general, source-independent
+   walkthrough of that step, see How-To Geek's
+   [How to Sideload Apps on Android](https://www.howtogeek.com/313433/how-to-sideload-apps-on-android/).
+   Confirm the install once that's allowed.
+3. **Grant the permissions the app asks for** (Bluetooth, nearby devices, location) —
+   these are required by Android's Nearby Connections API itself, not something this
+   app collects data through; without them nearby phones can't be discovered.
+4. **On the host phone**, open the app and tap through to start hosting. It will show
+   either a Nearby Connections screen (for other Android phones to join) or, if you're
+   on Wi-Fi, an IP address and QR code (for any device on the same network, including
+   iPhones and laptops, to join via browser).
+5. **On joining devices**: other Android phones need the same APK installed and can
+   then find the host over Nearby Connections; anyone on the same Wi-Fi can instead
+   just scan the QR code or open the shown address in a browser — no install needed for
+   that path.
+6. **Play.** Everyone enters a name, forms teams, and the host starts the round — see
+   [`android/README.md`](android/README.md) for the underlying architecture and known
+   limitations (e.g. no YouTube playback on the host, peers needing their own internet
+   for un-cached Deezer/Spotify previews).
+
 ## Known limitations
 
 - Rooms (running games) only live in memory — a server restart ends all running rounds

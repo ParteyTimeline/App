@@ -106,6 +106,34 @@ funktioniert auch wenn der Host nur Mobilfunk-Internet hat) — oder, falls der 
 zufällig im WLAN ist, per normalem Browser samt QR-Code (auch für iPhones/Laptops, ohne
 App-Install). Details, Setup und bekannte Einschränkungen: [`android/README.md`](android/README.md).
 
+### Anleitung: herunterladen, installieren und ein Spiel starten
+
+1. **APK herunterladen.** Auf dem Handy, das als Host dienen soll, die `app-release.apk`
+   aus dem [neuesten Release](https://github.com/ParteyTimeline/App/releases/latest)
+   laden und die heruntergeladene Datei öffnen.
+2. **Installation erlauben.** Da es sich nicht um eine Play-Store-App handelt, fragt
+   Android beim ersten Mal, ob "Apps aus unbekannten Quellen" installiert werden
+   dürfen — eine allgemeine, quellenunabhängige Anleitung dazu gibt es bei Heise:
+   [Externe Apps: APK-Dateien bei Android installieren – so klappt's](https://www.heise.de/tipps-tricks/Externe-Apps-APK-Dateien-bei-Android-installieren-so-klappt-s-3714330.html).
+   Danach die Installation bestätigen.
+3. **Die abgefragten Berechtigungen erteilen** (Bluetooth, Geräte in der Nähe,
+   Standort) — die verlangt Androids Nearby-Connections-API selbst, die App erhebt
+   darüber keine eigenen Daten; ohne sie können Handys in der Nähe nicht gefunden
+   werden.
+4. **Auf dem Host-Handy** die App öffnen und das Hosting starten. Es erscheint entweder
+   ein Nearby-Connections-Bildschirm (für andere Android-Handys zum Beitreten) oder,
+   falls man im WLAN ist, eine IP-Adresse mit QR-Code (für jedes Gerät im selben Netz,
+   auch iPhone und Laptop, zum Beitreten per Browser).
+5. **Auf den beitretenden Geräten**: Andere Android-Handys brauchen dieselbe APK und
+   finden den Host dann über Nearby Connections; wer im selben WLAN ist, kann
+   stattdessen einfach den QR-Code scannen oder die angezeigte Adresse im Browser
+   öffnen — dafür ist keine Installation nötig.
+6. **Losspielen.** Alle geben einen Namen ein, bilden Teams, und der Host startet die
+   Runde — siehe [`android/README.md`](android/README.md) für die Architektur im
+   Detail und bekannte Einschränkungen (z. B. kein YouTube-Playback auf dem Host,
+   Peers brauchen eigenes Internet für nicht zwischengespeicherte
+   Deezer/Spotify-Vorschauen).
+
 ## Bekannte Einschränkungen
 
 - Räume (laufende Spiele) leben nur im Arbeitsspeicher — ein Server-Neustart beendet alle laufenden

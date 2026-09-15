@@ -1,0 +1,7 @@
+Sicherheits-Fix: Das Verwalten von Playlisten (Umbenennen, Löschen,
+Cache leeren, Importieren) ist jetzt durch ein Admin-Passwort auf dem
+Server geschützt — bisher konnte jede:r eingeloggte Mitspieler:in diesen
+Bildschirm öffnen und die Playlist einer anderen Person löschen. Das
+Host-Gerät selbst muss weiterhin kein Passwort eingeben — es
+authentifiziert sich automatisch —, aber alle anderen, auch wer über
+Nearby, WLAN oder QR-Code beitritt, brauchen jetzt das Passwort.

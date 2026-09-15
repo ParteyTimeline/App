@@ -1,0 +1,6 @@
+Security fix: managing playlists (rename, delete, clear cache, import)
+is now protected by an admin password on the server, since any logged-in
+player could previously reach that screen and delete a playlist someone
+else contributed. The host device itself still doesn't need to type a
+password — it authenticates automatically — but every other player,
+including anyone joining over Nearby, LAN, or a QR code, now needs it.

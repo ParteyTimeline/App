@@ -9,6 +9,15 @@ import java.nio.ByteBuffer
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 
+private const val TAG = "PT-Tunnel"
+
+// This package stays pure JVM/no Android imports (see the class doc below)
+// so MuxProtocolTest/TunnelIntegrationTest can run as plain JUnit without
+// Robolectric — android.util.Log would throw "not mocked" there. Android
+// callers (NearbyHost/NearbyPeer) wire this to Log.d/Log.w once at startup;
+// it's a harmless no-op if nobody ever wires it (e.g. under test).
+var tunnelLog: (tag: String, message: String, error: Throwable?) -> Unit = { _, _, _ -> }
+
 /**
  * Minimal byte-stream multiplexer for tunnelling arbitrary TCP traffic
  * (many short-lived HTTP requests plus one long-lived WebSocket connection)
@@ -32,6 +41,17 @@ object MuxFrameType {
     // this, a stream that reaches EOF in only one direction would get torn
     // down entirely and the still-pending response would never arrive.
     const val EOF: Byte = 4
+
+    // No-op probe, sent immediately by both sides once the relay starts.
+    // Nearby Connections can silently drop an in-flight Payload during its
+    // own internal bandwidth-medium upgrade (e.g. WIFI_LAN -> WIFI_AWARE)
+    // if the channel was otherwise completely idle — real application
+    // traffic doesn't start until the peer's WebView makes its first HTTP
+    // request, which can be a while. An immediate PING (a) gives both mux
+    // readers something concrete to confirm receiving quickly, so a stalled
+    // link can be detected instead of waited on indefinitely, and (b) keeps
+    // the channel from sitting silent through that upgrade window at all.
+    const val PING: Byte = 5
 }
 
 data class MuxFrame(val streamId: Int, val type: Byte, val payload: ByteArray)
@@ -111,24 +131,37 @@ class MuxRelay(
     @Volatile
     var onLinkClosed: (() -> Unit)? = null
 
+    /** True once any frame at all — including our own PING — has been received. Lets callers detect a stalled link instead of waiting on it forever. */
+    @Volatile
+    var hasReceivedAnyFrame = false
+        private set
+
     fun start() {
+        tunnelLog(TAG, "MuxRelay starting reader thread", null)
         Thread({
             try {
                 while (true) {
-                    val frame = reader.readFrame() ?: break
+                    val frame = reader.readFrame() ?: run {
+                        tunnelLog(TAG, "MuxRelay reader got clean EOF", null)
+                        null
+                    } ?: break
+                    hasReceivedAnyFrame = true
+                    tunnelLog(TAG, "MuxRelay got frame streamId=${frame.streamId} type=${frame.type} len=${frame.payload.size}", null)
                     handleFrame(frame)
                 }
             } catch (e: IOException) {
-                // link dropped — fall through to cleanup
+                tunnelLog(TAG, "MuxRelay reader IOException, link dropped", e)
             } finally {
                 shutdown()
                 onLinkClosed?.invoke()
             }
         }, "mux-reader").start()
+        safeWrite(0, MuxFrameType.PING, ByteArray(0))
     }
 
     private fun handleFrame(frame: MuxFrame) {
         when (frame.type) {
+            MuxFrameType.PING -> {} // receipt alone is the point; see the constant's comment
             MuxFrameType.OPEN -> {
                 val socket = onRemoteOpen?.invoke(frame.streamId)
                 if (socket == null) {

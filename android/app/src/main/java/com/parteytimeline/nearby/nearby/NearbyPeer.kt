@@ -4,10 +4,13 @@ import android.content.Context
 import android.os.Handler
 import android.os.Looper
 import android.os.ParcelFileDescriptor
+import android.util.Log
 import com.google.android.gms.nearby.Nearby
 import com.google.android.gms.nearby.connection.ConnectionInfo
 import com.google.android.gms.nearby.connection.ConnectionLifecycleCallback
+import com.google.android.gms.nearby.connection.ConnectionOptions
 import com.google.android.gms.nearby.connection.ConnectionResolution
+import com.google.android.gms.nearby.connection.ConnectionType
 import com.google.android.gms.nearby.connection.ConnectionsClient
 import com.google.android.gms.nearby.connection.DiscoveredEndpointInfo
 import com.google.android.gms.nearby.connection.DiscoveryOptions
@@ -16,10 +19,16 @@ import com.google.android.gms.nearby.connection.Payload
 import com.google.android.gms.nearby.connection.PayloadCallback
 import com.google.android.gms.nearby.connection.PayloadTransferUpdate
 import com.google.android.gms.nearby.connection.Strategy
+import com.parteytimeline.nearby.tunnel.MuxFrameType
+import com.parteytimeline.nearby.tunnel.MuxWriter
 import com.parteytimeline.nearby.tunnel.PeerTunnelClient
+import com.parteytimeline.nearby.tunnel.tunnelLog
 import java.io.IOException
+import java.io.OutputStream
 
 data class NearbyHostCandidate(val endpointId: String, val name: String)
+
+private const val TAG = "PT-NearbyPeer"
 
 /**
  * Peer/joining side: discovers hosts advertising [NEARBY_SERVICE_ID], and
@@ -41,7 +50,7 @@ class NearbyPeer(context: Context, private val localDisplayName: String) {
     private val client: ConnectionsClient = Nearby.getConnectionsClient(context)
     private val handler = Handler(Looper.getMainLooper())
     private var tunnel: PeerTunnelClient? = null
-    private var outgoingWriteSide: ParcelFileDescriptor? = null
+    private var outgoingOutput: OutputStream? = null
     private var connectedEndpointId: String? = null
 
     private var discoveryActive = false
@@ -87,7 +96,16 @@ class NearbyPeer(context: Context, private val localDisplayName: String) {
         connecting = true
         manualDisconnect = false
         onConnecting?.invoke(endpointId)
-        client.requestConnection(localDisplayName, endpointId, connectionLifecycleCallback)
+        // NON_DISRUPTIVE just avoids changing Wi-Fi/Bluetooth state for a
+        // bandwidth upgrade we don't need — harmless to keep, but NOT what
+        // fixed the "connects but the tunnel never comes up" failure this
+        // was originally added to chase: that turned out to be a mutual
+        // deadlock in our own startup handshake (see sendOutgoingStream's
+        // comment below), unrelated to Nearby's medium/upgrade behavior.
+        val connectionOptions = ConnectionOptions.Builder()
+            .setConnectionType(ConnectionType.NON_DISRUPTIVE)
+            .build()
+        client.requestConnection(localDisplayName, endpointId, connectionLifecycleCallback, connectionOptions)
             .addOnFailureListener {
                 connecting = false
                 onConnectionFailed?.invoke(endpointId)
@@ -127,6 +145,7 @@ class NearbyPeer(context: Context, private val localDisplayName: String) {
         }
 
         override fun onConnectionResult(endpointId: String, resolution: ConnectionResolution) {
+            Log.d(TAG, "onConnectionResult($endpointId, success=${resolution.status.isSuccess}, statusCode=${resolution.status.statusCode})")
             connecting = false
             if (!resolution.status.isSuccess) {
                 onConnectionFailed?.invoke(endpointId)
@@ -136,11 +155,29 @@ class NearbyPeer(context: Context, private val localDisplayName: String) {
             connectedEndpointId = endpointId
             lastEndpointId = endpointId
             lastEndpointName = visibleEndpoints[endpointId] ?: lastEndpointName
-            reconnectAttempt = 0
+            // reconnectAttempt is reset once the tunnel actually starts
+            // (see onPayloadReceived below), not here — a Nearby-level
+            // "success" doesn't mean the tunnel handshake will ever
+            // actually complete (see the watchdog just below), and
+            // resetting here would restart backoff from attempt 1 on every
+            // failed handshake, defeating the growing delay/attempt cap.
             sendOutgoingStream(endpointId)
+            // Nearby Connections can report a successful connection and then
+            // silently never deliver either side's Payload at all — observed
+            // on real devices during its own internal bandwidth-medium
+            // upgrade, with no error and no onDisconnected. If we're still
+            // waiting on the host's payload (no tunnel yet) after this
+            // window, treat the link as dead ourselves.
+            handler.postDelayed({
+                if (connectedEndpointId == endpointId && tunnel == null) {
+                    Log.w(TAG, "No payload received from host within watchdog window for $endpointId — treating link as stalled")
+                    client.disconnectFromEndpoint(endpointId)
+                }
+            }, STALL_WATCHDOG_MS)
         }
 
         override fun onDisconnected(endpointId: String) {
+            Log.d(TAG, "onDisconnected($endpointId)")
             connecting = false
             teardownTunnel()
             onDisconnected?.invoke()
@@ -175,44 +212,100 @@ class NearbyPeer(context: Context, private val localDisplayName: String) {
         try {
             val pipe = ParcelFileDescriptor.createPipe()
             client.sendPayload(endpointId, Payload.fromStream(pipe[0]))
-            outgoingWriteSide = pipe[1]
+            val output = ParcelFileDescriptor.AutoCloseOutputStream(pipe[1])
+            outgoingOutput = output
+            Log.d(TAG, "sendOutgoingStream($endpointId): payload sent, write side stored")
+            // Break a mutual-wait deadlock: onPayloadReceived doesn't fire
+            // on either side until real bytes start flowing on THAT side's
+            // incoming payload, but the tunnel/MuxRelay that would normally
+            // produce those bytes (via its own startup PING) isn't built
+            // until onPayloadReceived fires — if both sides wait on the
+            // other's first byte before producing their own, neither ever
+            // does, and the whole link times out with zero bytes
+            // transferred (observed on real devices). Write a bare PING
+            // directly into our own outgoing stream right now, independent
+            // of anything else, to guarantee it doesn't depend on receiving
+            // first. Reused as-is by the real MuxRelay below once it exists.
+            MuxWriter(output).writeFrame(0, MuxFrameType.PING, ByteArray(0))
         } catch (e: IOException) {
+            Log.e(TAG, "sendOutgoingStream($endpointId) failed, disconnecting", e)
             client.disconnectFromEndpoint(endpointId)
         }
     }
 
     private val payloadCallback = object : PayloadCallback() {
         override fun onPayloadReceived(endpointId: String, payload: Payload) {
+            Log.d(TAG, "onPayloadReceived($endpointId, type=${payload.type})")
             if (payload.type != Payload.Type.STREAM) return
-            val writeSide = outgoingWriteSide ?: return
+            val output = outgoingOutput
+            if (output == null) {
+                Log.w(TAG, "onPayloadReceived($endpointId): no outgoing stream yet, dropping")
+                return
+            }
             val input = payload.asStream()!!.asInputStream()
-            val output = ParcelFileDescriptor.AutoCloseOutputStream(writeSide)
-            val client = PeerTunnelClient(input, output)
-            tunnel = client
-            client.onLinkClosed = { onDisconnected?.invoke() }
-            val localPort = client.start()
+            val tunnelClient = PeerTunnelClient(input, output)
+            tunnel = tunnelClient
+            tunnelClient.onLinkClosed = {
+                Log.d(TAG, "tunnel.onLinkClosed for $endpointId")
+                onDisconnected?.invoke()
+                // The mux relay can die (IOException on its own reader
+                // thread) without Nearby ever noticing/firing its own
+                // onDisconnected — e.g. mid-session, well after the startup
+                // watchdog above stopped being relevant. Force it so our
+                // reconnect-with-backoff (driven by onDisconnected) always
+                // gets a chance to run; a no-op if Nearby already agrees
+                // the endpoint is gone.
+                client.disconnectFromEndpoint(endpointId)
+            }
+            val localPort = tunnelClient.start()
+            reconnectAttempt = 0 // only now that the tunnel has actually started, not just "Nearby connected" (see onConnectionResult)
+            Log.d(TAG, "PeerTunnelClient started on localPort=$localPort for $endpointId")
             onTunnelReady?.invoke(localPort)
+            handler.postDelayed({
+                if (tunnel === tunnelClient && !tunnelClient.hasReceivedAnyFrame) {
+                    Log.w(TAG, "No frame received within watchdog window for $endpointId — treating link as stalled")
+                    client.disconnectFromEndpoint(endpointId)
+                }
+            }, STALL_WATCHDOG_MS)
         }
 
-        override fun onPayloadTransferUpdate(endpointId: String, update: PayloadTransferUpdate) {}
+        override fun onPayloadTransferUpdate(endpointId: String, update: PayloadTransferUpdate) {
+            Log.d(TAG, "onPayloadTransferUpdate($endpointId, status=${update.status}, bytes=${update.bytesTransferred}/${update.totalBytes})")
+            if (update.status == PayloadTransferUpdate.Status.FAILURE) {
+                Log.w(TAG, "Payload transfer failed for $endpointId — forcing disconnect to trigger reconnect")
+                client.disconnectFromEndpoint(endpointId)
+            }
+        }
     }
 
     private fun teardownTunnel() {
         tunnel?.stop()
         tunnel = null
-        outgoingWriteSide?.let { runCatching { it.close() } }
-        outgoingWriteSide = null
+        outgoingOutput?.let { runCatching { it.close() } }
+        outgoingOutput = null
         connectedEndpointId = null
     }
 
     init {
         current = this
+        // See NearbyHost's matching init block: wires the pure-JVM tunnel
+        // package's injectable logger to Log now that we're on Android.
+        tunnelLog = { tag, message, error -> if (error != null) Log.w(tag, message, error) else Log.d(tag, message) }
     }
 
     companion object {
         private const val MAX_RECONNECT_ATTEMPTS = 20
         private const val RECONNECT_BASE_DELAY_MS = 1000L
         private const val RECONNECT_MAX_DELAY_MS = 8000L
+        // Defense in depth: a connection can report success and then never
+        // deliver a payload at all, with no error and no onDisconnected —
+        // the concrete case we hit was our own startup deadlock (see
+        // sendOutgoingStream's comment, now fixed by writing an immediate
+        // PING), but Nearby itself can in principle drop a payload too. If
+        // nothing arrives within this window, treat the link as stalled and
+        // force a disconnect so the reconnect-with-backoff logic above
+        // takes over rather than waiting forever.
+        private const val STALL_WATCHDOG_MS = 8000L
 
         /** The most recently created peer — lets GameWebViewActivity hook reconnect events without owning the instance itself (see MainActivity, which does the actual creating). */
         @Volatile

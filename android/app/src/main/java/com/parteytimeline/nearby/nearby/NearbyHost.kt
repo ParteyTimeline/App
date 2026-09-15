@@ -4,6 +4,7 @@ import android.content.Context
 import android.os.Handler
 import android.os.Looper
 import android.os.ParcelFileDescriptor
+import android.util.Log
 import com.google.android.gms.nearby.Nearby
 import com.google.android.gms.nearby.connection.AdvertisingOptions
 import com.google.android.gms.nearby.connection.ConnectionInfo
@@ -15,9 +16,14 @@ import com.google.android.gms.nearby.connection.PayloadCallback
 import com.google.android.gms.nearby.connection.PayloadTransferUpdate
 import com.google.android.gms.nearby.connection.Strategy
 import com.parteytimeline.nearby.tunnel.HostTunnelServer
+import com.parteytimeline.nearby.tunnel.MuxFrameType
+import com.parteytimeline.nearby.tunnel.MuxWriter
+import com.parteytimeline.nearby.tunnel.tunnelLog
 import java.io.IOException
+import java.io.OutputStream
 
 const val NEARBY_SERVICE_ID = "com.parteytimeline.nearby.GAME"
+private const val TAG = "PT-NearbyHost"
 
 /**
  * Host side of "play nearby without a server": advertises this device,
@@ -37,10 +43,17 @@ class NearbyHost(context: Context, private val targetPort: Int, private val disp
     private val client: ConnectionsClient = Nearby.getConnectionsClient(context)
     private val handler = Handler(Looper.getMainLooper())
     private val tunnels = mutableMapOf<String, HostTunnelServer>()
-    private val outgoingWriteSides = mutableMapOf<String, ParcelFileDescriptor>()
+    private val outgoingOutputs = mutableMapOf<String, OutputStream>()
     private val endpointNames = mutableMapOf<String, String>()
     private var stopped = false
     private var advertisingRetryAttempt = 0
+
+    init {
+        // Wire the tunnel package's injectable logger to Log now that we're
+        // definitely on Android (the tunnel package itself stays pure JVM
+        // for plain-JUnit testability — see its own comment on tunnelLog).
+        tunnelLog = { tag, message, error -> if (error != null) Log.w(tag, message, error) else Log.d(tag, message) }
+    }
 
     var onPeerConnected: ((endpointId: String, endpointName: String) -> Unit)? = null
     var onPeerDisconnected: ((endpointId: String) -> Unit)? = null
@@ -78,8 +91,8 @@ class NearbyHost(context: Context, private val targetPort: Int, private val disp
         client.stopAllEndpoints()
         tunnels.values.forEach { it.stop() }
         tunnels.clear()
-        outgoingWriteSides.values.forEach { runCatching { it.close() } }
-        outgoingWriteSides.clear()
+        outgoingOutputs.values.forEach { runCatching { it.close() } }
+        outgoingOutputs.clear()
     }
 
     private val connectionLifecycleCallback = object : ConnectionLifecycleCallback() {
@@ -89,13 +102,26 @@ class NearbyHost(context: Context, private val targetPort: Int, private val disp
         }
 
         override fun onConnectionResult(endpointId: String, resolution: ConnectionResolution) {
+            Log.d(TAG, "onConnectionResult($endpointId, success=${resolution.status.isSuccess}, statusCode=${resolution.status.statusCode})")
             if (!resolution.status.isSuccess) return
             sendOutgoingStream(endpointId)
+            // See NearbyPeer's matching watchdog: Nearby Connections can
+            // report success and then never deliver either side's Payload
+            // at all, with no error and no onDisconnected. If we're still
+            // waiting on the peer's payload (no tunnel yet) after this
+            // window, treat the link as dead ourselves.
+            handler.postDelayed({
+                if (!tunnels.containsKey(endpointId)) {
+                    Log.w(TAG, "No payload received from peer within watchdog window for $endpointId — treating link as stalled")
+                    client.disconnectFromEndpoint(endpointId)
+                }
+            }, STALL_WATCHDOG_MS)
         }
 
         override fun onDisconnected(endpointId: String) {
+            Log.d(TAG, "onDisconnected($endpointId)")
             tunnels.remove(endpointId)?.stop()
-            outgoingWriteSides.remove(endpointId)?.let { runCatching { it.close() } }
+            outgoingOutputs.remove(endpointId)?.let { runCatching { it.close() } }
             onPeerDisconnected?.invoke(endpointId)
         }
     }
@@ -105,31 +131,68 @@ class NearbyHost(context: Context, private val targetPort: Int, private val disp
             val pipe = ParcelFileDescriptor.createPipe()
             // pipe[0] (read side) goes out over Nearby; pipe[1] (write side) is ours to write host->peer bytes into.
             client.sendPayload(endpointId, Payload.fromStream(pipe[0]))
-            outgoingWriteSides[endpointId] = pipe[1]
+            val output = ParcelFileDescriptor.AutoCloseOutputStream(pipe[1])
+            outgoingOutputs[endpointId] = output
+            Log.d(TAG, "sendOutgoingStream($endpointId): payload sent, write side stored")
+            // Break a mutual-wait deadlock: see NearbyPeer's matching
+            // comment. Both sides normally only produce their first bytes
+            // once onPayloadReceived fires and builds a tunnel/MuxRelay —
+            // but if neither side's payload is ever delivered because
+            // neither ever produces a first byte, the link just stalls with
+            // zero bytes transferred (observed on real devices). Write a
+            // bare PING directly now, independent of onPayloadReceived.
+            MuxWriter(output).writeFrame(0, MuxFrameType.PING, ByteArray(0))
         } catch (e: IOException) {
+            Log.e(TAG, "sendOutgoingStream($endpointId) failed, disconnecting", e)
             client.disconnectFromEndpoint(endpointId)
         }
     }
 
     private val payloadCallback = object : PayloadCallback() {
         override fun onPayloadReceived(endpointId: String, payload: Payload) {
+            Log.d(TAG, "onPayloadReceived($endpointId, type=${payload.type})")
             if (payload.type != Payload.Type.STREAM) return
-            val writeSide = outgoingWriteSides[endpointId] ?: return
+            val output = outgoingOutputs[endpointId]
+            if (output == null) {
+                Log.w(TAG, "onPayloadReceived($endpointId): no outgoing stream yet, dropping")
+                return
+            }
             val input = payload.asStream()!!.asInputStream()
-            val output = ParcelFileDescriptor.AutoCloseOutputStream(writeSide)
             val tunnel = HostTunnelServer(input, output, targetPort)
             tunnels[endpointId] = tunnel
-            tunnel.onLinkClosed = { onPeerDisconnected?.invoke(endpointId) }
+            tunnel.onLinkClosed = {
+                Log.d(TAG, "tunnel.onLinkClosed for $endpointId")
+                onPeerDisconnected?.invoke(endpointId)
+                // See NearbyPeer's matching comment: the mux relay can die
+                // without Nearby ever firing its own onDisconnected — force
+                // it so a stalled peer doesn't just sit connected-but-dead
+                // forever. No-op if Nearby already agrees it's gone.
+                client.disconnectFromEndpoint(endpointId)
+            }
             tunnel.start()
             onPeerConnected?.invoke(endpointId, endpointNames[endpointId] ?: endpointId)
+            handler.postDelayed({
+                if (tunnels[endpointId] === tunnel && !tunnel.hasReceivedAnyFrame) {
+                    Log.w(TAG, "No frame received within watchdog window for $endpointId — treating link as stalled")
+                    client.disconnectFromEndpoint(endpointId)
+                }
+            }, STALL_WATCHDOG_MS)
         }
 
-        override fun onPayloadTransferUpdate(endpointId: String, update: PayloadTransferUpdate) {}
+        override fun onPayloadTransferUpdate(endpointId: String, update: PayloadTransferUpdate) {
+            Log.d(TAG, "onPayloadTransferUpdate($endpointId, status=${update.status}, bytes=${update.bytesTransferred}/${update.totalBytes})")
+            if (update.status == PayloadTransferUpdate.Status.FAILURE) {
+                Log.w(TAG, "Payload transfer failed for $endpointId — forcing disconnect")
+                client.disconnectFromEndpoint(endpointId)
+            }
+        }
     }
 
     companion object {
         private const val MAX_ADVERTISING_RETRIES = 10
         private const val RETRY_BASE_DELAY_MS = 1000L
         private const val RETRY_MAX_DELAY_MS = 8000L
+        // See NearbyPeer's STALL_WATCHDOG_MS — same reasoning, host side.
+        private const val STALL_WATCHDOG_MS = 8000L
     }
 }

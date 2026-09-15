@@ -36,15 +36,14 @@ object NearbyPermissions {
             Manifest.permission.ACCESS_FINE_LOCATION,
             Manifest.permission.POST_NOTIFICATIONS, // needed to show the host's foreground-service notification
         )
-        Build.VERSION.SDK_INT == 32 -> arrayOf(
-            Manifest.permission.BLUETOOTH_SCAN,
-            Manifest.permission.BLUETOOTH_ADVERTISE,
-            Manifest.permission.BLUETOOTH_CONNECT,
-            Manifest.permission.NEARBY_WIFI_DEVICES,
-            Manifest.permission.ACCESS_COARSE_LOCATION,
-            Manifest.permission.ACCESS_FINE_LOCATION,
-        )
-        Build.VERSION.SDK_INT == 31 -> arrayOf(
+        // NEARBY_WIFI_DEVICES doesn't exist until API 33 (Android 13) — API
+        // 32 (Android 12L) is a real, shipped OS version that predates it,
+        // so requesting it there is requesting an undefined permission: the
+        // OS silently denies it with no dialog, and hasAll() would never
+        // return true on a real 12L device. 31 and 32 share the same
+        // pre-NEARBY_WIFI_DEVICES requirement set (BLUETOOTH_SCAN/ADVERTISE/
+        // CONNECT were both already introduced in API 31).
+        Build.VERSION.SDK_INT in 31..32 -> arrayOf(
             Manifest.permission.BLUETOOTH_SCAN,
             Manifest.permission.BLUETOOTH_ADVERTISE,
             Manifest.permission.BLUETOOTH_CONNECT,

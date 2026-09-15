@@ -60,8 +60,15 @@ class NodeRuntime(private val context: Context) {
         if (nodeDir.exists() && !wasApkUpdated()) return
         val preserved = File(context.filesDir, "nodejs-project-data-preserved")
         val dataDir = File(nodeDir, "data")
-        preserved.deleteRecursively()
-        if (dataDir.exists()) dataDir.copyRecursively(preserved, overwrite = true)
+        // If `preserved` already exists, a previous update was interrupted
+        // after moving data out but before restoring it — that's the ONLY
+        // remaining copy of the user's data (nodeDir may already be wiped),
+        // so it must never be deleted or clobbered by a fresh snapshot
+        // before being safely restored. Only take a new snapshot when there
+        // isn't already one waiting to be restored.
+        if (!preserved.exists() && dataDir.exists()) {
+            dataDir.copyRecursively(preserved, overwrite = true)
+        }
         nodeDir.deleteRecursively()
         copyAssetFolder(context.assets, "nodejs-project", nodeDir.absolutePath)
         if (preserved.exists()) {

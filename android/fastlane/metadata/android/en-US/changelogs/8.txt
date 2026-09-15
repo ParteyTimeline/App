@@ -1,0 +1,3 @@
+Fixed one more missing-permission bug (ACCESS_FINE_LOCATION) on the
+joining side, on top of the last two releases' Nearby permission
+fixes.

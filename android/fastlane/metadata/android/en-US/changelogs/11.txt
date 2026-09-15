@@ -1,0 +1,12 @@
+You can now export a playlist (including its offline cache) and import
+it again elsewhere — handy for moving playlists between devices or
+sharing them with another host. A new "Manage playlists" screen also
+lets you rename a playlist, clear just its cache, or delete it.
+
+Fixed: starting to host without Wi-Fi no longer hides the "Continue to
+game" button, and switching to "Find game nearby" now actually stops
+hosting instead of running both at once.
+
+Hosts can now stop accepting new players without shutting down the
+whole game — already-connected guests get disconnected too, and their
+app falls back to the start screen instead of sitting on a dead page.

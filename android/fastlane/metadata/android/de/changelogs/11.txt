@@ -1,0 +1,14 @@
+Playlisten (inkl. Offline-Cache) können jetzt exportiert und
+andernorts wieder importiert werden — praktisch, um Playlisten
+zwischen Geräten zu verschieben oder mit einem anderen Host zu teilen.
+Ein neuer Bildschirm "Playlisten verwalten" erlaubt außerdem Umbenennen,
+nur den Cache leeren oder Löschen.
+
+Behoben: Hosten ohne WLAN versteckt nicht mehr den "Weiter zum
+Spiel"-Button, und "Spiel in der Nähe suchen" beendet jetzt wirklich
+das Hosten statt beides gleichzeitig laufen zu lassen.
+
+Hosts können jetzt das Annehmen neuer Mitspieler stoppen, ohne das
+ganze Spiel zu beenden — bereits verbundene Gäste werden dabei
+ebenfalls getrennt, und ihre App springt zurück zum Startbildschirm
+statt auf einer toten Seite hängen zu bleiben.

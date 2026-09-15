@@ -1,136 +1,141 @@
 # Partey Timeline — Server
 
-Selbst gehosteter Hitster/[HitStar](https://github.com/Born2Root/HitStar)-Klon: kein Drucken, kein
-QR-Code. Spieler:innen loggen sich mit eigenem Account ein, bilden Teams (mind. 2, beliebig viele),
-und spielen jede:r auf dem eigenen Handy mit — ein Team teilt sich eine Zeitleiste, jedes
-Teammitglied kann am Zug der Gruppe mitziehen/mitraten.
+*English | [Deutsch](README.de.md)*
 
-Playlisten kommen aus **Deezer, Spotify oder YouTube** und werden beim Hinzufügen in der
-Bibliothek gespeichert. Beim Spiel werden sie **gleich gewichtet** gezogen: eine Playlist mit 300
-Songs kommt nicht öfter dran als eine mit 15 — wer mehr Songs beisteuert, hat keinen Vorteil.
+Self-hosted Hitster/[HitStar](https://github.com/Born2Root/HitStar) clone: no printing, no
+QR codes. Players log in with their own account, form teams (2 or more, any number), and
+each plays from their own phone — a team shares one timeline, and every team member can
+join in on the group's turn/guess.
 
-## Wie die Playlist-Quellen funktionieren
+Playlists come from **Deezer, Spotify, or YouTube** and are saved to the library when
+added. During the game they're drawn with **equal weight**: a playlist with 300 songs
+doesn't come up more often than one with 15 — contributing more songs gives no advantage.
 
-- **Deezer**: verwendet zuerst die eigene Vorschau. Fehlt diese, prüft die App passende
-  alternative Deezer-Veröffentlichungen, danach Spotify-Vorschauen und zuletzt YouTube.
-- **Spotify**: liest öffentliche Playlisten vollständig und seitenweise über SpotAPI, ohne
-  Spotify-Login oder eigenen API-Client. Zuerst wird die Vorschau der originalen Spotify-ID
-  aus der öffentlichen Embed-Seite geprüft. Danach folgen passende Deezer-Veröffentlichungen,
-  weitere Spotify-Treffer und zuletzt YouTube mit MusicBrainz-Metadaten.
-  Die Importhinweise zählen Spotify-, Deezer- und YouTube-Songs getrennt.
-  Spotify-Track-Links und Exportify-CSV behalten vorhandene Spotify-IDs ebenfalls bei.
-  Ist SpotAPI nicht verfügbar, wird die Playlist-Embed-Seite verwendet; diese liefert höchstens
-  100 Songs und der Importhinweis nennt den Fallback ausdrücklich.
-  Spotify-Vorschau-URLs werden beim Abspielen frisch geladen; nicht jeder Track hat eine.
-- **YouTube**: liest bis zu 300 Videos über `yt-dlp`. Titel und Interpret werden aus den
-  Video-Metadaten erkannt und mit MusicBrainz abgeglichen. Nur eindeutige, passende Treffer
-  mit Erscheinungsjahr werden übernommen; Titel, Interpret und Jahr kommen von MusicBrainz.
-  Das Audio kommt direkt vom ursprünglichen YouTube-Video, unabhängig von Deezer.
-  Beim ersten Abspielen erzeugen `yt-dlp` und `ffmpeg` einen 30-Sekunden-MP3-Clip
-  (die ersten 30 Sekunden). Das kann eine kurze Ladezeit verursachen. Bis zu 32 Clips
-  bleiben im Arbeitsspeicher; es werden keine Audiodateien dauerhaft gespeichert.
-  Private, gesperrte oder entfernte Videos können trotz passender Metadaten nicht abspielbar sein.
-  Vorhandene YouTube-Playlisten behalten ihre bisherigen Deezer-Tracks; für den neuen Ablauf
-  die Playlist aus der Bibliothek entfernen und erneut importieren.
+## How the playlist sources work
 
-Playlisten hinzufügen kann etwas dauern (Deezer throttled bei zu vielen parallelen Anfragen sehr
-aggressiv — der Import läuft deshalb bewusst langsam mit Retries; bei ~100 Songs ca. 20–80s).
+- **Deezer**: uses its own preview first. If that's missing, the app checks matching
+  alternative Deezer releases, then Spotify previews, and finally YouTube.
+- **Spotify**: reads public playlists in full, page by page, via SpotAPI, without a
+  Spotify login or a dedicated API client. First it checks the preview of the original
+  Spotify ID from the public embed page. Then it follows up with matching Deezer
+  releases, further Spotify matches, and finally YouTube with MusicBrainz metadata.
+  The import summary counts Spotify, Deezer, and YouTube songs separately.
+  Spotify track links and Exportify CSVs also keep any existing Spotify IDs.
+  If SpotAPI isn't available, the playlist embed page is used instead; that yields at
+  most 100 songs, and the import summary explicitly names the fallback.
+  Spotify preview URLs are loaded fresh at playback time; not every track has one.
+- **YouTube**: reads up to 300 videos via `yt-dlp`. Title and artist are recognized from
+  the video metadata and matched against MusicBrainz. Only unambiguous, matching hits
+  with a release year are kept; title, artist, and year come from MusicBrainz.
+  The audio comes directly from the original YouTube video, independent of Deezer.
+  On first playback, `yt-dlp` and `ffmpeg` generate a 30-second MP3 clip (the first 30
+  seconds). This can cause a short loading delay. Up to 32 clips stay in memory; no audio
+  files are stored permanently.
+  Private, restricted, or removed videos may not be playable despite matching metadata.
+  Existing YouTube playlists keep their previous Deezer tracks; to switch to the new
+  flow, remove the playlist from the library and re-import it.
 
-## Lokal starten
+Adding playlists can take a while (Deezer throttles very aggressively under too many
+parallel requests — the import therefore runs deliberately slowly with retries; roughly
+20–80s for ~100 songs).
+
+## Running locally
 
 ```bash
 npm install
 SESSION_SECRET=$(node -e "console.log(require('crypto').randomBytes(32).toString('hex'))") npm start
 ```
 
-Läuft dann auf `http://localhost:3000`. Ohne `SESSION_SECRET` startet der Server trotzdem (mit
-Warnung), aber alle Logins gehen beim nächsten Neustart verloren. Für YouTube-Playlist-Importe
-braucht es zusätzlich aktuelles `yt-dlp[default]` und `ffmpeg` im `PATH`, für die
-YouTube-Audioextraktion außerdem Node.js 22 oder neuer
-([yt-dlp-Laufzeit-Anforderungen](https://github.com/yt-dlp/yt-dlp/wiki/EJS)); das Docker-Image bringt diese mit.
-Für vollständige Spotify-Playlisten zusätzlich `python3 -m pip install "spotapi==1.2.8" pymongo redis`
-installieren. Die beiden Zusatzpakete beheben fehlende Import-Abhängigkeiten von SpotAPI;
-es werden keine MongoDB- oder Redis-Server benötigt. Docker enthält diese Pakete bereits.
-Deezer-Import und Spotify-Embed-Fallback funktionieren ohne Python.
+Then runs on `http://localhost:3000`. Without `SESSION_SECRET` the server still starts
+(with a warning), but all logins are lost on the next restart. YouTube playlist imports
+additionally need a current `yt-dlp[default]` and `ffmpeg` on the `PATH`, and YouTube
+audio extraction additionally needs Node.js 22 or newer
+([yt-dlp runtime requirements](https://github.com/yt-dlp/yt-dlp/wiki/EJS)); the Docker
+image already includes these. For full Spotify playlists, also install
+`python3 -m pip install "spotapi==1.2.8" pymongo redis`. These two extra packages fix
+missing import dependencies of SpotAPI; no MongoDB or Redis server is actually needed.
+Docker already includes these packages. Deezer import and the Spotify embed fallback
+work without Python.
 
-## Mit Docker
+## With Docker
 
 ```bash
 cp .env.example .env
-# .env öffnen und SESSION_SECRET setzen (Befehl dafür steht als Kommentar in der Datei)
+# open .env and set SESSION_SECRET (the command for that is in a comment in the file)
 docker compose up -d --build
 ```
 
-Der Container bindet standardmäßig nur an `127.0.0.1:4001` (nicht öffentlich erreichbar) — gedacht
-zum Dahinterschalten eines Reverse Proxies, siehe unten. Nutzer- und Playlist-Daten liegen in
-`./data/store.json` (Bind-Mount, übersteht Container-Neustarts). **Aktive Logins nicht** — Sessions
-leben nur im Arbeitsspeicher des Prozesses; nach einem Neustart müssen sich alle neu einloggen
-(Accounts selbst bleiben erhalten).
+By default the container only binds to `127.0.0.1:4001` (not publicly reachable) —
+meant to sit behind a reverse proxy, see below. User and playlist data live in
+`./data/store.json` (bind mount, survives container restarts). **Active logins do
+not** — sessions only live in the process's memory; after a restart everyone has to log
+in again (accounts themselves are preserved).
 
-## Konfiguration
+## Configuration
 
-Alle Optionen (siehe `.env.example` für Details und Beispiele):
+All options (see `.env.example` for details and examples):
 
-| Variable | Pflicht? | Zweck |
+| Variable | Required? | Purpose |
 |---|---|---|
-| `SESSION_SECRET` | für Dauerbetrieb | Ohne das gehen alle Logins beim nächsten Neustart verloren |
-| `COOKIE_SECURE` | nein (Default `0`) | `1` setzen, sobald die App über HTTPS läuft |
-| `PORT` | nein (Default `3000`) | nur relevant ohne Docker |
-| `MUSICBRAINZ_USER_AGENT` | empfohlen | Identifiziert die Instanz gegenüber MusicBrainz (siehe deren API-Etikette) |
+| `SESSION_SECRET` | for permanent operation | Without it, all logins are lost on the next restart |
+| `COOKIE_SECURE` | no (default `0`) | Set to `1` as soon as the app runs over HTTPS |
+| `PORT` | no (default `3000`) | only relevant without Docker |
+| `MUSICBRAINZ_USER_AGENT` | recommended | Identifies the instance to MusicBrainz (see their API etiquette) |
 
-## Reverse Proxy (optional)
+## Reverse proxy (optional)
 
-Für einen öffentlichen Domain-Zugriff reicht ein normaler nginx-Reverse-Proxy vor dem Container.
-`deploy/nginx.example.conf` zeigt ein Beispiel für den Fall, dass die App unter einem Unterpfad
-einer bestehenden Domain laufen soll (z. B. `https://deine-domain.example/partey/`) — die
-`Upgrade`/`Connection`-Header sind dabei nicht optional, ohne sie bricht die WebSocket-Verbindung
-ab, über die der Spielzustand läuft. Läuft die App stattdessen auf einer eigenen (Sub-)Domain,
-genügt ein einfacher `location / { proxy_pass ...; }`-Block mit denselben Headern.
+For public domain access, a plain nginx reverse proxy in front of the container is
+enough. `deploy/nginx.example.conf` shows an example for running the app under a
+subpath of an existing domain (e.g. `https://your-domain.example/partey/`) — the
+`Upgrade`/`Connection` headers are not optional there; without them the WebSocket
+connection that carries the game state breaks. If the app instead runs on its own
+(sub)domain, a simple `location / { proxy_pass ...; }` block with the same headers is
+enough.
 
-## Offline spielen (Vorschauen vorab herunterladen)
+## Playing offline (pre-downloading previews)
 
-In der Playlist-Bibliothek lässt sich pro Playliste "📥 für offline herunterladen"
-antippen — lädt alle Vorschau-Clips einmal herunter und speichert sie unter
-`data/audio-cache/`. Danach kommt `/api/track/:id/preview` aus dem lokalen Cache statt per
-Redirect von Deezer/Spotify bzw. Live-Generierung bei YouTube — nützlich bei wackliger
-Verbindung, und Voraussetzung für komplett internetfreies Spielen über die Android-App
-(siehe unten).
+In the playlist library, each playlist has a "📥 download for offline" button — this
+downloads all preview clips once and stores them under `data/audio-cache/`. After that,
+`/api/track/:id/preview` is served from the local cache instead of redirecting to
+Deezer/Spotify or generating live from YouTube — useful on a shaky connection, and a
+prerequisite for playing completely offline via the Android app (see below).
 
-## Android-App: mit Freunden in der Nähe, ganz ohne Server
+## Android app: play with nearby friends, no server at all
 
-Im Verzeichnis `android/` liegt eine Android-App, mit der ein Handy den Server lokal
-hostet und andere Handys sich **ohne gemeinsames WLAN** verbinden (Nearby Connections,
-funktioniert auch wenn der Host nur Mobilfunk-Internet hat) — oder, falls der Host
-zufällig im WLAN ist, per normalem Browser samt QR-Code (auch für iPhones/Laptops, ohne
-App-Install). Details, Setup und bekannte Einschränkungen: [`android/README.md`](android/README.md).
+The `android/` directory contains an Android app that lets one phone host the server
+locally, with other phones connecting **without a shared Wi-Fi network** (Nearby
+Connections, works even if the host only has mobile data) — or, if the host happens to
+be on Wi-Fi, via a plain browser and QR code (also works for iPhones/laptops, no app
+install needed). Details, setup, and known limitations:
+[`android/README.md`](android/README.md).
 
-## Bekannte Einschränkungen
+## Known limitations
 
-- Räume (laufende Spiele) leben nur im Arbeitsspeicher — ein Server-Neustart beendet alle laufenden
-  Runden (Accounts/Playlisten bleiben erhalten).
-- SpotAPI nutzt inoffizielle Spotify-Endpunkte, die sich ändern können. Der Embed-Fallback
-  liefert höchstens 100 Songs. Vollständige Importe sind auf 10.000 Einträge begrenzt.
-- YouTube-Titel-Erkennung und MusicBrainz-Abgleich garantieren keine 100 % Trefferquote.
-  MusicBrainz-Abfragen sind auf etwa eine Anfrage pro Sekunde begrenzt.
-- YouTube kann Audioanfragen blockieren; `yt-dlp` muss aktuell gehalten werden.
-- `npm audit` zeigt eine moderate `qs`-DoS-Advisory (transitive Abhängigkeit von `express`); es
-  gibt aktuell keine gepatchte Version. Für diese App (keine komplexen Query-Strings von
-  Fremden) geringes Risiko, aber im Auge behalten.
+- Rooms (running games) only live in memory — a server restart ends all running rounds
+  (accounts/playlists are preserved).
+- SpotAPI uses unofficial Spotify endpoints that can change. The embed fallback yields
+  at most 100 songs. Full imports are capped at 10,000 entries.
+- YouTube title recognition and MusicBrainz matching don't guarantee a 100% hit rate.
+  MusicBrainz queries are rate-limited to roughly one request per second.
+- YouTube can block audio requests; `yt-dlp` needs to be kept up to date.
+- `npm audit` shows a moderate `qs` DoS advisory (a transitive dependency of `express`);
+  there's currently no patched version. Low risk for this app (no complex query strings
+  from strangers), but worth keeping an eye on.
 
-## Rechtlicher Hinweis
+## Legal notice
 
-Dieses Projekt ist ein inoffizielles, nicht-kommerzielles Fanprojekt, inspiriert von
-[HitStar](https://github.com/Born2Root/HitStar) (selbst wiederum eine Fan-Umsetzung der
-Spielmechanik von *Hitster*). Es steht in keiner Verbindung zu und wird nicht unterstützt von
-Hitster A/S oder deren Rechteinhabern.
+This project is an unofficial, non-commercial fan project, inspired by
+[HitStar](https://github.com/Born2Root/HitStar) (itself a fan implementation of the game
+mechanics of *Hitster*). It has no connection to, and is not endorsed by, Hitster A/S or
+its rights holders.
 
-Die App verwendet Deezers öffentliche API und Vorschauen, Spotifys öffentliche Playlist-Metadaten über SpotAPI beziehungsweise Embed-Seiten
-sowie MusicBrainz-Metadaten. Für YouTube werden Playlist-Metadaten und Audio über `yt-dlp`
-abgerufen; `ffmpeg` erstellt daraus kurze Spielclips im Arbeitsspeicher. Wer diese App selbst hostet, ist
-selbst dafür verantwortlich, das im eigenen Nutzungskontext (privat, nicht-kommerziell) mit den
-Nutzungsbedingungen der jeweiligen Plattform sowie dem in der eigenen Rechtsordnung geltenden
-Recht in Einklang zu halten.
+The app uses Deezer's public API and previews, Spotify's public playlist metadata via
+SpotAPI or embed pages, and MusicBrainz metadata. For YouTube, playlist metadata and
+audio are retrieved via `yt-dlp`; `ffmpeg` then creates short in-memory game clips from
+them. Anyone self-hosting this app is responsible for keeping their own use (private,
+non-commercial) in line with each platform's terms of service and the law applicable in
+their own jurisdiction.
 
-## Lizenz
+## License
 
 [MIT](LICENSE)

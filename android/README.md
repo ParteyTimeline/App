@@ -1,91 +1,92 @@
 # Partey Timeline — Nearby (Android)
 
-Android-App, um **ohne gehosteten Server** mit Freunden in der Nähe zu spielen. Ein Handy
-("Host") startet den bestehenden Node-Server lokal eingebettet und hält den Spielstand
-(wie beim normalen Web-Betrieb); andere Handys verbinden sich darauf auf zwei Wegen:
+*English | [Deutsch](README.de.md)*
 
-- **Nearby Connections** (Bluetooth/Wi-Fi Direct): funktioniert **ohne gemeinsames WLAN**
-  und auch wenn der Host nur Mobilfunk-Internet hat — braucht die App auch auf den
-  beitretenden Geräten (nur Android).
-- **Browser im selben WLAN**: falls der Host zufällig im WLAN ist, zeigt die App eine IP
-  + einen QR-Code — jedes Gerät im selben Netz (auch iPhone/Laptop) kann dann ganz normal
-  per Browser mitspielen, ganz ohne App-Install.
+Android app for playing with nearby friends **without a hosted server**. One phone
+("host") starts the existing Node server locally, embedded, and holds the game state
+(same as normal web operation); other phones connect to it in two ways:
 
-Die Web-UI (`public/`) läuft dabei unverändert in einer WebView — `public/app.js` baut
-WebSocket-URL und Fetch-Pfade bereits relativ zu `location.host`/`location.pathname` auf,
-weshalb ein reiner **TCP-Byte-Tunnel** (kein HTTP/WS-Parsing) als Bridge zum Host reicht.
+- **Nearby Connections** (Bluetooth/Wi-Fi Direct): works **without a shared Wi-Fi
+  network**, and even if the host only has mobile data — also needs the app on the
+  joining devices (Android only).
+- **Browser on the same Wi-Fi**: if the host happens to be on Wi-Fi, the app shows an IP
+  address and a QR code — any device on the same network (including iPhone/laptop) can
+  then join normally via browser, with no app install at all.
 
-## Architektur (Kurzfassung)
+The web UI (`public/`) runs unchanged in a WebView — `public/app.js` already builds its
+WebSocket URL and fetch paths relative to `location.host`/`location.pathname`, which is
+why a plain **TCP byte tunnel** (no HTTP/WS parsing) is enough as a bridge to the host.
+
+## Architecture (short version)
 
 ```
-Host-Handy: eingebetteter Node-Server (nodejs-mobile) auf 127.0.0.1:3000
+Host phone: embedded Node server (nodejs-mobile) on 127.0.0.1:3000
             ↕ TCP
-   HostTunnelServer  ←── Mux über Nearby Connections ──→  PeerTunnelClient
-   (tunnel/Tunnel.kt)   (zwei STREAM-Payloads = ein         (tunnel/Tunnel.kt)
-                         Full-Duplex-Link, siehe             ↕
-                         nearby/NearbyHost.kt)          lokaler Port → WebView (Peer)
+   HostTunnelServer  ←── Mux over Nearby Connections ──→  PeerTunnelClient
+   (tunnel/Tunnel.kt)   (two STREAM payloads = one         (tunnel/Tunnel.kt)
+                         full-duplex link, see               ↕
+                         nearby/NearbyHost.kt)          local port → WebView (peer)
 ```
 
-`tunnel/MuxProtocol.kt` + `tunnel/Tunnel.kt` sind reines Kotlin/JVM ohne Android-Imports
-und mit `./gradlew test` prüfbar (`MuxProtocolTest`, `TunnelIntegrationTest`) — siehe
-unten. `nearby/NearbyHost.kt`/`NearbyPeer.kt` sind die Android-spezifische Anbindung an
-die Nearby-Connections-API (zwei STREAM-Payloads pro Verbindung, je eine Richtung, exakt
-wie im offiziellen `NearbyConnectionsWalkieTalkie`-Beispiel von Google).
+`tunnel/MuxProtocol.kt` + `tunnel/Tunnel.kt` are pure Kotlin/JVM with no Android imports
+and can be checked with `./gradlew test` (`MuxProtocolTest`, `TunnelIntegrationTest`) —
+see below. `nearby/NearbyHost.kt`/`NearbyPeer.kt` are the Android-specific glue to the
+Nearby Connections API (two STREAM payloads per connection, one per direction, exactly
+like in Google's official `NearbyConnectionsWalkieTalkie` sample).
 
 ## Setup
 
-1. **libnode-Binaries laden** (nicht im Git, ~55 MB, drei ABIs):
+1. **Fetch the libnode binaries** (not in Git, ~55 MB, three ABIs):
    ```bash
    ../scripts/fetch-libnode.sh
    ```
-2. In Android Studio öffnen (`android/` als Projekt). Der erste Gradle-Sync installiert
-   bei Bedarf NDK 26.1.10909125 und CMake 3.22.1 automatisch.
-3. Der `:app:syncNodeProject`-Task kopiert `server.js`/`src/`/`public/`/`package.json`/
-   `node_modules` bei jedem Build frisch aus dem Repo-Root nach
-   `app/src/main/assets/nodejs-project/` — keine manuelle Kopie nötig, keine
-   Server-Code-Duplizierung im Android-Projekt.
-4. Auf **zwei echten Android-Geräten** installieren (Nearby Connections braucht echte
-   BLE-/Wi-Fi-Direct-Radios — funktioniert in Standard-Emulatoren nicht zuverlässig, siehe
-   unten).
+2. Open in Android Studio (`android/` as the project). The first Gradle sync
+   automatically installs NDK 26.1.10909125 and CMake 3.22.1 if needed.
+3. The `:app:syncNodeProject` task copies `server.js`/`src/`/`public/`/`package.json`/
+   `node_modules` fresh from the repo root into `app/src/main/assets/nodejs-project/`
+   on every build — no manual copying needed, no server code duplication in the
+   Android project.
+4. Install on **two real Android devices** (Nearby Connections needs real BLE/Wi-Fi
+   Direct radios — doesn't work reliably in standard emulators, see below).
 
-## Berechtigungen
+## Permissions
 
-Nearby Connections' Berechtigungsmodell hat sich über Android-Versionen mehrfach
-geändert; `nearby/NearbyPermissions.kt` und das Manifest bilden das 1:1 nach Googles
-eigenem Referenzcode ab (`android/connectivity-samples`, `NearbyConnectionsWalkieTalkie`):
-Bluetooth-Scan/Advertise/Connect + `NEARBY_WIFI_DEVICES` ab Android 13, Standort ab
-Android 12 bzw. älter je nach OS-Version.
+Nearby Connections' permission model has changed several times across Android
+versions; `nearby/NearbyPermissions.kt` and the manifest mirror Google's own reference
+code 1:1 (`android/connectivity-samples`, `NearbyConnectionsWalkieTalkie`):
+Bluetooth scan/advertise/connect + `NEARBY_WIFI_DEVICES` from Android 13, location from
+Android 12 or older depending on OS version.
 
-## Was zuverlässig getestet ist — und was nicht
+## What's reliably tested — and what isn't
 
-- **`tunnel/` per Unit-Test verifiziert**: `MuxProtocolTest` (Framing/Edge-Cases) und
-  `TunnelIntegrationTest` (Host+Peer über einen echten Loopback-Socket, mehrere parallele
-  Verbindungen, Payload > 1 internem Puffer) laufen als reine JVM-Tests, keine
-  Android-Abhängigkeit. `./gradlew test` ausführen.
-- **Restliche App (Kotlin/Ressourcen/Manifest/Gradle-Setup inkl. NDK/CMake) wurde per
-  `gradle assembleDebug` in einer isolierten Docker-Umgebung gebaut** (Android SDK 34,
-  NDK 26.1.10909125, echte libnode-Binaries) — kompiliert und paketiert erfolgreich zu
-  einer APK. Das prüft, dass der Code compilable ist, **nicht** dass Nearby Connections,
-  der eingebettete Node-Server oder die WebView zur Laufzeit korrekt funktionieren.
-- **Auf echten Geräten nicht automatisiert testbar** in dieser Entwicklungsumgebung: kein
-  Android-SDK/-Emulator mit Hardwarebeschleunigung verfügbar (kein `/dev/kvm`), und Nearby
-  Connections braucht ohnehin echte Bluetooth/Wi-Fi-Direct-Radios, die kein Emulator
-  zuverlässig nachbildet. **Vor dem ersten echten Spielabend unbedingt manuell
-  durchspielen** (Login, Raum, Team, Song ziehen/platzieren, Audio — mit und ohne
-  gemeinsames WLAN, siehe Checkliste im Hauptprojekt-Kontext).
+- **`tunnel/` verified via unit tests**: `MuxProtocolTest` (framing/edge cases) and
+  `TunnelIntegrationTest` (host+peer over a real loopback socket, several parallel
+  connections, payload larger than one internal buffer) run as plain JVM tests, no
+  Android dependency. Run with `./gradlew test`.
+- **The rest of the app (Kotlin/resources/manifest/Gradle setup including NDK/CMake)
+  was built via `gradle assembleDebug` in an isolated Docker environment** (Android SDK
+  34, NDK 26.1.10909125, real libnode binaries) — compiled and packaged successfully
+  into an APK. That verifies the code is compilable, **not** that Nearby Connections,
+  the embedded Node server, or the WebView actually work correctly at runtime.
+- **Not automatically testable on real devices** in this development environment: no
+  Android SDK/emulator with hardware acceleration available (no `/dev/kvm`), and Nearby
+  Connections needs real Bluetooth/Wi-Fi Direct radios anyway, which no emulator
+  reliably reproduces. **Be sure to manually play through a full round before the
+  first real game night** (login, room, team, drawing/placing a song, audio — with and
+  without a shared Wi-Fi network, see the checklist in the main project context).
 
-## Bekannte Einschränkungen
+## Known limitations
 
-- **Kein YouTube-Import/-Wiedergabe auf dem Host-Handy**: `yt-dlp`/`ffmpeg` sind externe
-  Binaries, die hier nicht mitgebaut werden. Deezer- und Spotify-Playlisten funktionieren
-  voll (inkl. Offline-Cache, siehe Haupt-README). Eine mitgebrachte `data/store.json` mit
-  YouTube-Playlisten importiert zwar, Wiedergabe schlägt aber fehl.
-- **Peers brauchen weiterhin eigenes Internet für Deezer/Spotify-Vorschauen** (302-Redirect
-  direkt zur jeweiligen CDN, am Tunnel vorbei) — außer die Playlist wurde vorher über
-  "Vorschauen herunterladen" auf dem Host zwischengespeichert; dann läuft alles rein über
-  den Tunnel bzw. das LAN, auch ganz ohne Internet.
-- **Nur der Host hält eine Foreground-Notification** (`HostForegroundService`) — Peers
-  laufen nur innerhalb der App-Lebensdauer; wird die App auf einem Peer-Gerät in den
-  Hintergrund geschickt, kann die Verbindung abbrechen.
-- Reconnect nach Verbindungsabbruch, viele gleichzeitige Peers unter Last und
-  App-Icon/Branding sind bewusst nicht Teil dieser ersten Version.
+- **No YouTube import/playback on the host phone**: `yt-dlp`/`ffmpeg` are external
+  binaries that aren't built in here. Deezer and Spotify playlists work fully
+  (including offline cache, see the main README). A `data/store.json` brought along
+  with YouTube playlists will import fine, but playback will fail.
+- **Peers still need their own internet access for Deezer/Spotify previews** (a 302
+  redirect straight to the respective CDN, bypassing the tunnel) — unless the playlist
+  was already cached on the host via "download previews"; then everything runs purely
+  over the tunnel or the LAN, even with no internet at all.
+- **Only the host holds a foreground notification** (`HostForegroundService`) — peers
+  only run for the app's own lifetime; if the app is sent to the background on a peer
+  device, the connection can drop.
+- Reconnect after a dropped connection, many simultaneous peers under load, and
+  app icon/branding are deliberately not part of this first version.

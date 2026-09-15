@@ -8,8 +8,18 @@
          (developers.google.com/nearby/connections/android/get-started),
          version-gated because the underlying permission model changed
          across Android 12/13. -->
-    <uses-permission android:maxSdkVersion="31" android:name="android.permission.ACCESS_WIFI_STATE" />
-    <uses-permission android:maxSdkVersion="31" android:name="android.permission.CHANGE_WIFI_STATE" />
+    <!-- Unlike the Bluetooth/location permissions below, these two are
+         "normal" (not runtime-dangerous) and NOT superseded by anything on
+         API 32+ — Nearby Connections' WIFI_LAN/WIFI_AWARE/WIFI_DIRECT/
+         WIFI_HOTSPOT mediums check for them unconditionally regardless of
+         Android version. An earlier maxSdkVersion="31" cap here (mistakenly
+         modeled on the Bluetooth permissions' actual version-gating) made
+         startAdvertising()/startDiscovery() fail outright on Android 13+
+         with "Missing permission: ... ACCESS_WIFI_STATE" — silently, since
+         it's not a runtime grant so there was no permission-denial dialog
+         to notice. -->
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
     <uses-permission android:maxSdkVersion="30" android:name="android.permission.BLUETOOTH" />
     <uses-permission android:maxSdkVersion="30" android:name="android.permission.BLUETOOTH_ADMIN" />
     <uses-permission android:maxSdkVersion="28" android:name="android.permission.ACCESS_COARSE_LOCATION" />

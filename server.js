@@ -12,6 +12,7 @@ const spotify = require('./src/spotify');
 const youtube = require('./src/youtube');
 const { streamPreview, createClip } = require('./src/youtube-audio');
 const audioCache = require('./src/audio-cache');
+const coverCache = require('./src/cover-cache');
 const rooms = require('./src/rooms');
 const attachWebSocket = require('./src/ws');
 
@@ -316,6 +317,12 @@ async function runPrefetch(playlistId) {
         failed++;
       }
     }
+    // Best-effort and separate from the audio failure count above: a
+    // missing cover just falls back to a generated placeholder client-side
+    // (see public/app.js's renderCover), it's not a "track unavailable" case.
+    if (t.cover && !coverCache.isCached(id)) {
+      try { await coverCache.cacheFromUrl(id, t.cover); } catch (e) { /* ignore, falls back client-side */ }
+    }
   }, (done, total) => store.updatePlaylist(playlistId, { cacheProgress: { done, total } }));
   store.updatePlaylist(playlistId, {
     cacheStatus: failed === 0 ? 'ready' : failed === missing.length ? 'failed' : 'partial',
@@ -357,6 +364,37 @@ app.get('/api/track/:id/preview', auth.requireAuth, async (req, res) => {
   } catch (e) {
     res.status(404).send('Keine Vorschau verfügbar');
   }
+});
+
+function findTrackCoverUrl(id) {
+  for (const p of store.listPlaylists()) {
+    // Deezer-native tracks store a bare numeric id (see server.js's other
+    // id.startsWith('spotify:'/'youtube:') checks) — req.params.id is
+    // always a string, so this needs a loose/string-normalized compare,
+    // not ===, to ever match those.
+    const t = p.tracks.find((t) => String(t.id) === id);
+    if (t) return t.cover || null;
+  }
+  return null;
+}
+
+// The client always points its <img> here (see public/app.js's renderCover)
+// rather than at the raw Deezer/Spotify CDN URL directly, so a Nearby
+// peer's tunnel — which only proxies requests to this same server, not
+// arbitrary internet hosts — has a chance of ever seeing a cover at all.
+// A locally cached copy (see /prefetch above) is served inline and needs
+// no network; otherwise this redirects to the live CDN URL, which works
+// fine for normal online use but not over a Nearby tunnel with no cover
+// cached — the client's onerror handler renders a generated placeholder
+// either way, so a 404 here (no known cover, e.g. a YouTube-derived track)
+// is an expected, harmless outcome, not an error to fix.
+app.get('/api/track/:id/cover', auth.requireAuth, (req, res) => {
+  if (coverCache.isCached(req.params.id)) {
+    return coverCache.serveCached(req.params.id, res);
+  }
+  const url = findTrackCoverUrl(req.params.id);
+  if (!url) return res.status(404).send('Kein Cover verfügbar');
+  res.redirect(302, url);
 });
 
 // ---------- rooms ----------

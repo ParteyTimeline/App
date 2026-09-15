@@ -110,6 +110,49 @@ function esc(s) {
   return String(s).replace(/[&<>"']/g, (c) => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
 }
 
+// Always points at our own /api/track/:id/cover (see server.js) rather
+// than a raw Deezer/Spotify CDN URL directly — a Nearby peer's tunnel only
+// proxies requests to this same server, not arbitrary internet hosts, so a
+// direct external URL would never load for a peer regardless of caching.
+// That endpoint serves a locally cached copy inline when there is one (see
+// the "download for offline" prefetch), redirects to the live CDN URL
+// otherwise (fine for normal online use), or 404s when there's no known
+// cover at all (e.g. a YouTube-derived track) — any of which can also just
+// fail to load (dead link, no internet), so either way this renders a
+// stand-in on error: the track's own first letter large in the background
+// with the year badged over it, sized/positioned by whichever container
+// class is passed in (.chip or .flipcard-back).
+function coverLetter(title, artist) {
+  const s = String(title || artist || '').trim();
+  return s ? s[0].toUpperCase() : '?';
+}
+
+function renderCoverFallback(letter, year, cls) {
+  return `<div class="${cls} cover-fb"><span class="cf-letter">${esc(letter)}</span><span class="cf-year tab">${esc(String(year))}</span></div>`;
+}
+
+function renderCover(id, title, artist, year, cls) {
+  const letter = coverLetter(title, artist);
+  return `<img class="${cls}" src="${esc(BASE)}api/track/${esc(id)}/cover" alt="" data-fallback-letter="${esc(letter)}" data-fallback-year="${esc(String(year))}" onerror="ptCoverFallback(this)">`;
+}
+
+// Called from the inline onerror= above when a cover URL 404s/fails to
+// load at runtime, online or offline alike. Builds the replacement via
+// safe DOM APIs (not outerHTML/innerHTML) since this runs against a live
+// node rather than the usual server-string-template render path.
+function ptCoverFallback(imgEl) {
+  const div = document.createElement('div');
+  div.className = `${imgEl.getAttribute('class') || ''} cover-fb`;
+  const letterSpan = document.createElement('span');
+  letterSpan.className = 'cf-letter';
+  letterSpan.textContent = imgEl.dataset.fallbackLetter || '?';
+  const yearSpan = document.createElement('span');
+  yearSpan.className = 'cf-year tab';
+  yearSpan.textContent = imgEl.dataset.fallbackYear || '';
+  div.append(letterSpan, yearSpan);
+  imgEl.replaceWith(div);
+}
+
 async function api(method, path, body) {
   const res = await fetch(BASE + path, {
     method,
@@ -926,7 +969,7 @@ function renderGamePlay(s) {
         <div class="flipcard-face flipcard-front"><div class="q vinylspin">?</div></div>
         <div class="flipcard-face flipcard-back">
           ${revealed ? `
-            <img src="${esc(c.cover || '')}" alt="">
+            ${renderCover(c.id, c.t, c.a, c.y, '')}
             <div class="ttl">${esc(c.t)}</div>
             <div class="art">${esc(c.a)}</div>
             <div class="yr tab">${c.y}</div>
@@ -1022,7 +1065,7 @@ function renderRail(team, interactive, selectedGap, action, lockedGap) {
     }
     if (g < tl.length) {
       const c = tl[g];
-      html += `<div class="chip"><img src="${esc(c.cover || '')}" alt=""><div class="ct">${esc(c.t)}</div><div class="cy tab">${c.y}</div></div>`;
+      html += `<div class="chip">${renderCover(c.id, c.t, c.a, c.y, '')}<div class="ct">${esc(c.t)}</div><div class="cy tab">${c.y}</div></div>`;
     }
   }
   return html;

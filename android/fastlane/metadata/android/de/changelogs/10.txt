@@ -1,0 +1,4 @@
+Behoben, dass der Spielbildschirm auf schmalen Handys seitlich
+scrollbar wurde. Cover werden jetzt auch über Nearby zwischengespeichert
+und übertragen — und ein Song ohne Cover (oder mit totem Cover-Link)
+zeigt einen schönen Platzhalter statt eines kaputten Bilds.

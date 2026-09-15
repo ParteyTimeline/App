@@ -1,0 +1,4 @@
+Fixed the game screen becoming sideways-scrollable on narrow phones.
+Album covers now get cached and shared over Nearby too — and any
+song still missing one (or with a dead cover link) shows a nice
+placeholder instead of a broken image.

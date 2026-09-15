@@ -13,3 +13,4 @@ services:
     environment:
       - SESSION_SECRET=${SESSION_SECRET}
       - COOKIE_SECURE=1
+      - ADMIN_PASSWORD_HASH=${ADMIN_PASSWORD_HASH}

@@ -57,6 +57,11 @@ const STRINGS = {
     'playlist.deleteConfirm': '„{name}" wirklich löschen? Das entfernt auch ihren zwischengespeicherten Offline-Cache (sofern kein anderer Playlist denselben Song enthält).',
     'playlist.back': '← Zurück',
 
+    'admin.title': 'Admin-Passwort',
+    'admin.lead': 'Playlisten verwalten (umbenennen, löschen, Cache leeren, importieren) ist admin-geschützt — auf diesem Server einmal pro Tab das Admin-Passwort eingeben.',
+    'admin.passwordPlaceholder': 'Admin-Passwort',
+    'admin.submit': 'Bestätigen',
+
     'playlistErr.no_playable_songs': 'Keine abspielbaren Songs gefunden',
     'playlistErr.import_failed': 'Import fehlgeschlagen',
 
@@ -84,6 +89,9 @@ const STRINGS = {
     'apiErr.name_required': 'Name fehlt',
     'apiErr.name_taken': 'Name ist schon vergeben — auf einem anderen Handy. Wähl einen anderen.',
     'apiErr.local_hosting_stopped': 'Der Host hat das Hosten gerade beendet.',
+    'apiErr.admin_wrong_password': 'Falsches Admin-Passwort',
+    'apiErr.admin_not_configured': 'Admin-Funktionen sind auf diesem Server nicht konfiguriert (ADMIN_PASSWORD_HASH fehlt)',
+    'apiErr.admin_required': 'Admin-Passwort erforderlich',
 
     'lobby.createTitle': 'Neuen Raum erstellen',
     'lobby.createLead': 'Playlisten wählt jede:r Mitspieler:in gleich im Warteraum selbst — Songs werden <strong>pro Spieler:in gleich gewichtet</strong> gezogen, nicht pro Playlist. Wer drei Playlisten beisteuert, hat dadurch keinen Vorteil gegenüber wer nur eine hat.',
@@ -243,6 +251,11 @@ const STRINGS = {
     'playlist.deleteConfirm': 'Really delete "{name}"? This also removes its cached offline copy (unless another playlist shares the same song).',
     'playlist.back': '← Back',
 
+    'admin.title': 'Admin password',
+    'admin.lead': 'Managing playlists (rename, delete, clear cache, import) is admin-protected — enter this server\'s admin password once per tab.',
+    'admin.passwordPlaceholder': 'Admin password',
+    'admin.submit': 'Confirm',
+
     'playlistErr.no_playable_songs': 'No playable songs found',
     'playlistErr.import_failed': 'Import failed',
 
@@ -269,6 +282,9 @@ const STRINGS = {
     'apiErr.join_failed': 'Failed to join',
     'apiErr.name_required': 'Name is missing',
     'apiErr.name_taken': 'That name is already taken on another phone — pick a different one.',
+    'apiErr.admin_wrong_password': 'Wrong admin password',
+    'apiErr.admin_not_configured': 'Admin features aren\'t configured on this server (ADMIN_PASSWORD_HASH is missing)',
+    'apiErr.admin_required': 'Admin password required',
 
     'lobby.createTitle': 'Create new room',
     'lobby.createLead': 'Everyone picks their own playlists right in the waiting room — songs are drawn <strong>weighted equally per player</strong>, not per playlist. Contributing three playlists gives you no edge over someone with just one.',

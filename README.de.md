@@ -79,6 +79,7 @@ Alle Optionen (siehe `.env.example` für Details und Beispiele):
 | `COOKIE_SECURE` | nein (Default `0`) | `1` setzen, sobald die App über HTTPS läuft |
 | `PORT` | nein (Default `3000`) | nur relevant ohne Docker |
 | `MUSICBRAINZ_USER_AGENT` | empfohlen | Identifiziert die Instanz gegenüber MusicBrainz (siehe deren API-Etikette) |
+| `ADMIN_PASSWORD_HASH` | für Playlist-Verwaltung | bcrypt-Hash des Admin-Passworts, das Umbenennen/Löschen/Importieren von Playlisten schützt (siehe `.env.example`); ohne diese Variable ist der Bildschirm nicht verfügbar. Auf dem eigenen Host-Gerät der Android-App nicht nötig, das authentifiziert sich automatisch |
 
 ## Reverse Proxy (optional)
 

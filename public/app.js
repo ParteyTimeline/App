@@ -33,6 +33,32 @@ let IMPORTING_PLAYLIST = false;
 let MANAGE_RETURN_VIEW = 'lobby'; // where "back" on the manage-playlists screen goes
 let RENAMING_PLAYLIST_ID = null;
 let PLAYLIST_ACTION_BUSY = null; // id of a playlist mid delete/clear-cache request, to avoid a double-tap race
+let ADMIN_VERIFIED = false; // this tab entered the shared admin password this session
+let ADMIN_LOGIN_ERROR = '';
+
+// Only ever returns a real value in the Android app's own host-role WebView
+// — see GameWebViewActivity.kt's AndroidLocalBridge.getControlToken(),
+// which itself only ever answers with the real secret when ITS OWN
+// Activity was constructed with role == "host" (see NodeRuntime.kt's
+// controlToken and server.js's admin gate). Deliberately NOT cached in a
+// JS variable at page load: a device can go from hosting to joining
+// someone else's game without a full process restart, and re-reading the
+// native side fresh on every call — rather than trusting a value read
+// once — means a stale token from an earlier host session can never leak
+// into a later guest session, whatever JS-level state happens to survive.
+// The bridge call itself is synchronous and cheap, so there's no reason to
+// cache it. Lets the device that's actually hosting manage its own
+// playlist library without typing the shared admin password every time,
+// while every other viewer — guest, LAN/QR browser, or a normal online
+// player — still needs it.
+function localControlToken() {
+  if (!(LOCAL_MODE && LOCAL_ROLE === 'host')) return null;
+  try {
+    return (window.AndroidLocalBridge && window.AndroidLocalBridge.getControlToken && window.AndroidLocalBridge.getControlToken()) || null;
+  } catch (e) {
+    return null;
+  }
+}
 
 let ROOM_STATE = null;
 let WS = null;
@@ -158,9 +184,12 @@ function ptCoverFallback(imgEl) {
 }
 
 async function api(method, path, body) {
+  const headers = body ? { 'Content-Type': 'application/json' } : {};
+  const localToken = localControlToken();
+  if (localToken) headers['X-Local-Control-Token'] = localToken;
   const res = await fetch(BASE + path, {
     method,
-    headers: body ? { 'Content-Type': 'application/json' } : undefined,
+    headers: Object.keys(headers).length ? headers : undefined,
     body: body ? JSON.stringify(body) : undefined,
   });
   let data = null;
@@ -433,8 +462,47 @@ function showManagePlaylists() {
   MANAGE_RETURN_VIEW = VIEW === 'room' ? 'room' : 'lobby';
   RENAMING_PLAYLIST_ID = null;
   LOBBY_ERROR = ''; LOBBY_NOTE = '';
-  VIEW = 'managePlaylists';
+  // The Android host is already authenticated via its own control token (see
+  // localControlToken() above) — everyone else needs the shared admin
+  // password, once per tab.
+  if (ADMIN_VERIFIED || localControlToken()) {
+    VIEW = 'managePlaylists';
+  } else {
+    ADMIN_LOGIN_ERROR = '';
+    VIEW = 'adminLogin';
+  }
   render();
+}
+
+async function adminLogin(password) {
+  ADMIN_LOGIN_ERROR = '';
+  try {
+    await api('POST', 'api/admin/login', { password });
+    ADMIN_VERIFIED = true;
+    VIEW = 'managePlaylists';
+  } catch (e) {
+    ADMIN_LOGIN_ERROR = apiErrorMessage(e);
+  }
+  render();
+}
+
+function renderAdminLogin() {
+  return `
+  <div class="auth-wrap">
+    ${renderHeader()}
+    <div class="card">
+      <h2>${t('admin.title')}</h2>
+      <p class="lead">${t('admin.lead')}</p>
+      ${ADMIN_LOGIN_ERROR ? `<div class="error-msg">${esc(ADMIN_LOGIN_ERROR)}</div>` : ''}
+      <form data-form="adminlogin">
+        <div class="field">
+          <input type="password" name="password" placeholder="${esc(t('admin.passwordPlaceholder'))}" autocomplete="current-password" required autofocus>
+        </div>
+        <button class="btn primary block" type="submit">${t('admin.submit')}</button>
+      </form>
+      <button class="btn ghost small" data-action="backfrommanage" style="margin-top:10px;">${t('playlist.cancel')}</button>
+    </div>
+  </div>`;
 }
 
 async function renamePlaylist(id, name) {
@@ -477,6 +545,7 @@ async function deletePlaylist(id, name) {
 }
 
 function renderManagePlaylists() {
+  const localToken = localControlToken();
   const rows = PLAYLISTS.map((p) => {
     const busy = PLAYLIST_ACTION_BUSY === p.id;
     const nameHtml = RENAMING_PLAYLIST_ID === p.id
@@ -492,7 +561,7 @@ function renderManagePlaylists() {
       <span class="pmeta">${t('playlist.meta', { count: p.count, addedBy: esc(p.addedBy) })}</span>
       ${renderCacheStatus(p)}
       <div class="manage-row-actions">
-        <a class="btn ghost small" href="${esc(BASE)}api/playlists/${esc(p.id)}/export">${t('playlist.export')}</a>
+        <a class="btn ghost small" href="${esc(BASE)}api/playlists/${esc(p.id)}/export${localToken ? '?localToken=' + encodeURIComponent(localToken) : ''}">${t('playlist.export')}</a>
         ${hasCache ? `<button class="btn ghost small" data-action="clearcache" data-id="${esc(p.id)}" ${busy ? 'disabled' : ''}>${t('playlist.clearCache')}</button>` : ''}
         <button class="btn ghost small danger" data-action="deleteplaylist" data-id="${esc(p.id)}" data-name="${esc(p.name)}" ${busy ? 'disabled' : ''}>${t('playlist.delete')}</button>
       </div>
@@ -690,6 +759,7 @@ function render() {
   else if (VIEW === 'lobby') app.innerHTML = renderLobby();
   else if (VIEW === 'room') app.innerHTML = renderRoom();
   else if (VIEW === 'managePlaylists') app.innerHTML = renderManagePlaylists();
+  else if (VIEW === 'adminLogin') app.innerHTML = renderAdminLogin();
   bindEvents();
 }
 
@@ -983,7 +1053,7 @@ function renderRoomLobby(s) {
         ${ADDING_PLAYLIST ? `<span class="spinner"></span> ${t('playlist.starting')}` : t('lobby.addButton')}
       </button>
     </div>
-    <button class="btn ghost small" data-action="showmanageplaylists">${t('playlist.manageLink')}</button>
+    ${LOCAL_MODE && LOCAL_ROLE === 'guest' ? '' : `<button class="btn ghost small" data-action="showmanageplaylists">${t('playlist.manageLink')}</button>`}
   </div>`;
 }
 
@@ -1361,6 +1431,12 @@ function bindEvents() {
   if (joinForm) joinForm.onsubmit = (e) => {
     e.preventDefault();
     joinRoom(new FormData(joinForm).get('code'));
+  };
+
+  const adminLoginForm = app.querySelector('[data-form="adminlogin"]');
+  if (adminLoginForm) adminLoginForm.onsubmit = (e) => {
+    e.preventDefault();
+    adminLogin(new FormData(adminLoginForm).get('password'));
   };
 }
 

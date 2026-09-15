@@ -106,6 +106,24 @@ app.get('/api/me', (req, res) => {
   res.json({ username: req.session.user });
 });
 
+// ---------- admin (playlist library management gate) ----------
+
+app.post('/api/admin/login', auth.requireAuth, (req, res) => {
+  if (!process.env.ADMIN_PASSWORD_HASH) {
+    return res.status(503).json({ error: 'Admin-Funktionen sind nicht konfiguriert', code: 'admin_not_configured' });
+  }
+  if (!auth.verifyAdmin((req.body || {}).password)) {
+    return res.status(401).json({ error: 'Falsches Admin-Passwort', code: 'admin_wrong_password' });
+  }
+  req.session.isAdmin = true;
+  res.json({ ok: true });
+});
+
+app.post('/api/admin/logout', (req, res) => {
+  delete req.session.isAdmin;
+  res.json({ ok: true });
+});
+
 // ---------- playlist library ----------
 
 app.get('/api/playlists', auth.requireAuth, (req, res) => {
@@ -417,7 +435,7 @@ app.get('/api/track/:id/cover', auth.requireAuth, (req, res) => {
 function audioEntryName(id) { return 'audio/' + path.basename(audioCache.cachePath(id)); }
 function coverEntryName(id) { return 'covers/' + path.basename(coverCache.cachePath(id)); }
 
-app.get('/api/playlists/:id/export', auth.requireAuth, (req, res) => {
+app.get('/api/playlists/:id/export', auth.requireAuth, auth.requireAdmin, (req, res) => {
   const playlist = store.getPlaylist(req.params.id);
   if (!playlist) return res.status(404).json({ error: 'Playlist nicht gefunden', code: 'playlist_not_found' });
 
@@ -442,7 +460,7 @@ app.get('/api/playlists/:id/export', auth.requireAuth, (req, res) => {
 // built-in express.raw() handles that with no extra dependency, and the
 // client just sends the File's own bytes as the request body (see
 // public/app.js's importPlaylist).
-app.post('/api/playlists/import', auth.requireAuth, express.raw({ type: 'application/gzip', limit: '250mb' }), (req, res) => {
+app.post('/api/playlists/import', auth.requireAuth, auth.requireAdmin, express.raw({ type: 'application/gzip', limit: '250mb' }), (req, res) => {
   if (!Buffer.isBuffer(req.body) || !req.body.length) {
     return res.status(400).json({ error: 'Keine Datei erhalten', code: 'empty_upload' });
   }
@@ -503,7 +521,7 @@ app.post('/api/playlists/import', auth.requireAuth, express.raw({ type: 'applica
   res.json({ id: playlist.id, name: playlist.name, status: 'ready', tracksImported: meta.tracks.length, audioRestored, coverRestored });
 });
 
-app.patch('/api/playlists/:id', auth.requireAuth, (req, res) => {
+app.patch('/api/playlists/:id', auth.requireAuth, auth.requireAdmin, (req, res) => {
   const playlist = store.getPlaylist(req.params.id);
   if (!playlist) return res.status(404).json({ error: 'Playlist nicht gefunden', code: 'playlist_not_found' });
   const name = String((req.body || {}).name || '').trim();
@@ -522,7 +540,7 @@ function trackUsedElsewhere(id, excludePlaylistId) {
   return store.listPlaylists().some((p) => p.id !== excludePlaylistId && p.tracks.some((t) => String(t.id) === id));
 }
 
-app.delete('/api/playlists/:id/cache', auth.requireAuth, (req, res) => {
+app.delete('/api/playlists/:id/cache', auth.requireAuth, auth.requireAdmin, (req, res) => {
   const playlist = store.getPlaylist(req.params.id);
   if (!playlist) return res.status(404).json({ error: 'Playlist nicht gefunden', code: 'playlist_not_found' });
   for (const t of playlist.tracks) {
@@ -536,7 +554,7 @@ app.delete('/api/playlists/:id/cache', auth.requireAuth, (req, res) => {
   res.json({ ok: true });
 });
 
-app.delete('/api/playlists/:id', auth.requireAuth, (req, res) => {
+app.delete('/api/playlists/:id', auth.requireAuth, auth.requireAdmin, (req, res) => {
   const playlist = store.getPlaylist(req.params.id);
   if (!playlist) return res.status(404).json({ error: 'Playlist nicht gefunden', code: 'playlist_not_found' });
   for (const t of playlist.tracks) {

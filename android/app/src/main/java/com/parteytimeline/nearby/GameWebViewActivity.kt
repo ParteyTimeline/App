@@ -24,6 +24,7 @@ import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
+import com.parteytimeline.nearby.host.HostForegroundService
 import com.parteytimeline.nearby.nearby.NearbyPeer
 
 private const val EXTRA_PORT = "port"
@@ -159,6 +160,16 @@ class GameWebViewActivity : AppCompatActivity() {
             fun hostStopped() {
                 runOnUiThread { if (!isFinishing) finish() }
             }
+
+            // Lets the HOST's own playlist-management UI (public/app.js) skip
+            // the shared admin-password prompt — it already proves itself to
+            // the server the same way HostForegroundService's own host-control
+            // calls do (see server.js's requireAdmin). Only ever answers for
+            // role == "host"; a guest's WebView (Nearby, LAN, or QR) always
+            // gets null here, same as a plain browser would.
+            @android.webkit.JavascriptInterface
+            fun getControlToken(): String? =
+                if (role == "host") HostForegroundService.instance?.nodeRuntime?.controlToken else null
         }, "AndroidLocalBridge")
         webView.loadUrl(url)
 

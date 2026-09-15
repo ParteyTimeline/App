@@ -26,7 +26,11 @@ private const val NOTIFICATION_ID = 1
  * every connected peer's game mid-round.
  */
 class HostForegroundService : Service() {
-    private lateinit var nodeRuntime: NodeRuntime
+    // Not private: GameWebViewActivity reads nodeRuntime.controlToken to hand
+    // the host's own WebView the same secret the server checks (see
+    // AndroidLocalBridge.getControlToken() below and server.js's admin gate).
+    lateinit var nodeRuntime: NodeRuntime
+        private set
 
     lateinit var nearbyHost: NearbyHost
         private set

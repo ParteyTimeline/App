@@ -111,7 +111,7 @@ class MainActivity : AppCompatActivity() {
         tvStatus.text = getString(R.string.status_hosting)
         window.decorView.postDelayed({ hookHostCallbacks() }, 300)
 
-        val lanIp = LanShareInfo.currentLanIp()
+        val lanIp = LanShareInfo.currentLanIp(this)
         if (lanIp != null) {
             // Same no-account, no-code local flow as the Nearby tunnel path
             // below (see GameWebViewActivity) — this URL is meant for

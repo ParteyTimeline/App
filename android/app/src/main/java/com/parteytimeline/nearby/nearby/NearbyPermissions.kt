@@ -27,11 +27,13 @@ object NearbyPermissions {
             Manifest.permission.BLUETOOTH_ADVERTISE,
             Manifest.permission.BLUETOOTH_CONNECT,
             Manifest.permission.NEARBY_WIFI_DEVICES,
-            // NEARBY_WIFI_DEVICES only covers the Wi-Fi mediums — Nearby
-            // Connections' BLE medium still goes through the classic
-            // location-gated scan path regardless of Android version (see
-            // AndroidManifest.xml's ACCESS_COARSE_LOCATION comment).
+            // NEARBY_WIFI_DEVICES only covers the Wi-Fi mediums' advertising
+            // side — BLE (host) needs COARSE, Wi-Fi LAN discovery (peer)
+            // needs FINE specifically, regardless of Android version (see
+            // AndroidManifest.xml's ACCESS_COARSE_LOCATION/ACCESS_FINE_LOCATION
+            // comments). Requesting both covers host and peer roles alike.
             Manifest.permission.ACCESS_COARSE_LOCATION,
+            Manifest.permission.ACCESS_FINE_LOCATION,
             Manifest.permission.POST_NOTIFICATIONS, // needed to show the host's foreground-service notification
         )
         Build.VERSION.SDK_INT == 32 -> arrayOf(
@@ -40,6 +42,7 @@ object NearbyPermissions {
             Manifest.permission.BLUETOOTH_CONNECT,
             Manifest.permission.NEARBY_WIFI_DEVICES,
             Manifest.permission.ACCESS_COARSE_LOCATION,
+            Manifest.permission.ACCESS_FINE_LOCATION,
         )
         Build.VERSION.SDK_INT == 31 -> arrayOf(
             Manifest.permission.BLUETOOTH_SCAN,

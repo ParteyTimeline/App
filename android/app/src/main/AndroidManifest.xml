@@ -31,7 +31,16 @@
          mediums; its BLE medium still goes through the classic
          location-gated scan path regardless of Android version. -->
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
-    <uses-permission android:minSdkVersion="29" android:maxSdkVersion="31" android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <!-- Same story as ACCESS_COARSE_LOCATION just above, found the same way:
+         Google's guide caps this at maxSdkVersion="31" (superseded by
+         NEARBY_WIFI_DEVICES on 32+), but on-device testing showed the PEER
+         side's startDiscovery() failing on Android 13 with ApiException
+         8036 (MISSING_PERMISSION_ACCESS_FINE_LOCATION) — asymmetric with the
+         host side, which only needed COARSE. Nearby Connections' Wi-Fi LAN
+         medium apparently needs FINE specifically for scanning (reading Wi-Fi
+         scan results has required FINE, not COARSE, since Android 8), even
+         though advertising over the same medium didn't. -->
+    <uses-permission android:minSdkVersion="29" android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:minSdkVersion="31" android:name="android.permission.BLUETOOTH_ADVERTISE" />
     <uses-permission android:minSdkVersion="31" android:name="android.permission.BLUETOOTH_CONNECT" />
     <uses-permission android:minSdkVersion="31" android:name="android.permission.BLUETOOTH_SCAN" />

@@ -1,0 +1,5 @@
+Den eigentlichen Fehler hinter "Spiel in der Nähe finden geht nicht"
+behoben: beide Geräte warteten aufeinander, bis das andere zuerst
+etwas sagt — das tat also keins. Hosten und Beitreten per Nearby
+funktioniert jetzt durchgängig. Außerdem behoben: der QR-Code zum
+WLAN-Beitritt zeigte manchmal eine Mobilfunk- statt der WLAN-Adresse.

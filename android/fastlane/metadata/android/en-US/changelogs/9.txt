@@ -1,0 +1,5 @@
+Fixed the actual bug behind "can't find a game nearby": both devices
+were waiting for each other to speak first, so neither ever did.
+Nearby hosting and joining now work end to end. Also fixed the LAN
+join QR code sometimes showing a mobile-data address instead of the
+Wi-Fi one.

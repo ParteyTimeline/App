@@ -1,0 +1,3 @@
+Keine App-Änderungen — behebt den Docker-Image-Build für 32-Bit-ARM
+(linux/arm/v7), der wegen fehlender Systembibliotheken beim
+Kompilieren zweier Python-Abhängigkeiten aus dem Quellcode fehlschlug.

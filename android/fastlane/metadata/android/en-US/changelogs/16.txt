@@ -1,0 +1,3 @@
+No app changes — fixes the Docker image build for 32-bit ARM
+(linux/arm/v7), which was failing to compile two Python dependencies
+from source due to missing system libraries.

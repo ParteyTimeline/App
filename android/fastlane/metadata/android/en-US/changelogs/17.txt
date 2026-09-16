@@ -1,0 +1,2 @@
+New room option: shuffle which team goes first, on by default, so the
+same team doesn't always get the first-move advantage every round.

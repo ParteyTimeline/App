@@ -70,7 +70,7 @@ function fuzzyMatch(guess, actual) {
 
 const DEFAULT_TEAM_NAMES = ['Team Rot', 'Team Teal', 'Team Gold', 'Team Wein', 'Team Blau', 'Team Karamell', 'Team Grün', 'Team Lila'];
 
-function createRoom({ name, hostUsername, target, teamCount, bonusMode, noDuplicateYears, stealIntentTimeoutMs, stealPlaceTimeoutMs, stealTieMode }) {
+function createRoom({ name, hostUsername, target, teamCount, bonusMode, noDuplicateYears, stealIntentTimeoutMs, stealPlaceTimeoutMs, stealTieMode, shuffleTeamOrder }) {
   let code;
   do {
     code = genCode();
@@ -113,6 +113,11 @@ function createRoom({ name, hostUsername, target, teamCount, bonusMode, noDuplic
     //    a guaranteed-wrong guess just because someone clicked first, but
     //    clashing with another team costs you the steal either way.
     stealTieMode: stealTieMode === 'void' ? 'void' : 'block',
+    // Randomizes which team goes first (and the turn order after that) once
+    // at startGame(), so the team array's creation order — otherwise always
+    // team 0 first, every single game — doesn't quietly hand the same team
+    // a first-move advantage round after round. On by default.
+    shuffleTeamOrder: shuffleTeamOrder !== false,
     teams,
     turnIndex: 0,
     // lobby -> ready -> listening -> placed -> revealed -> gameover
@@ -258,6 +263,11 @@ function startGame(room, username) {
   // stalling on a team nobody joined.
   room.teams = room.teams.filter((t) => t.members.length > 0);
   if (room.teams.length < 2) throw err('need_more_teams');
+  // Randomize turn order once, here — not on every reshuffle/redraw — so it
+  // stays fixed for the rest of this game. Team identity (name/color) stays
+  // with each team object; only the array position (i.e. turnIndex order)
+  // changes.
+  if (room.shuffleTeamOrder) room.teams = shuffle(room.teams);
 
   // Build per-player pools, but first dedupe by track id ACROSS THE WHOLE
   // ROOM: two people might have the same song in their own playlists (very

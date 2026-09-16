@@ -571,7 +571,7 @@ app.delete('/api/playlists/:id', auth.requireAuth, auth.requireAdmin, (req, res)
 // ---------- rooms ----------
 
 app.post('/api/rooms', auth.requireAuth, (req, res) => {
-  const { name, target, teamCount, bonusMode, noDuplicateYears, stealIntentTimeoutSec, stealPlaceTimeoutSec, stealTieMode } = req.body || {};
+  const { name, target, teamCount, bonusMode, noDuplicateYears, stealIntentTimeoutSec, stealPlaceTimeoutSec, stealTieMode, shuffleTeamOrder } = req.body || {};
   // No playlists here anymore — everyone who joins picks their own once
   // they're in the lobby (see WS 'selectPlaylists'), so contributions are
   // weighted per player, not per playlist someone happened to add first.
@@ -585,6 +585,7 @@ app.post('/api/rooms', auth.requireAuth, (req, res) => {
     stealIntentTimeoutMs: (parseInt(stealIntentTimeoutSec, 10) || 4) * 1000,
     stealPlaceTimeoutMs: (parseInt(stealPlaceTimeoutSec, 10) || 10) * 1000,
     stealTieMode: stealTieMode === 'void' ? 'void' : 'block',
+    shuffleTeamOrder: shuffleTeamOrder !== false,
   });
   res.json({ code: room.code });
 });

@@ -1,0 +1,2 @@
+Neue Raumoption: Zugreihenfolge der Teams zu Beginn zufällig mischen,
+standardmäßig an — so hat nicht immer dasselbe Team den ersten Zug.

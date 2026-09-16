@@ -86,7 +86,7 @@ docker run -d --name partey-timeline \
 ```
 
 `:latest` always points at the newest release; pin a specific version instead with
-e.g. `ghcr.io/parteytimeline/app:0.5.5` (the tag matches the app's `android-vX.Y.Z`
+e.g. `ghcr.io/parteytimeline/app:0.5.6` (the tag matches the app's `android-vX.Y.Z`
 release, without the `android-v` prefix). With `docker-compose.yml`, replace `build: .`
 with `image: ghcr.io/parteytimeline/app:latest` to get the same effect.
 

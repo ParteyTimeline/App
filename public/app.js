@@ -24,6 +24,7 @@ let NO_DUPLICATE_YEARS = false;
 let STEAL_INTENT_SEC = 4;
 let STEAL_PLACE_SEC = 10;
 let STEAL_TIE_MODE = 'block'; // 'block' | 'void'
+let SHUFFLE_TEAM_ORDER = true;
 let AUTH_MODE = 'login'; // login | register
 let AUTH_ERROR = '';
 let LOBBY_ERROR = '';
@@ -628,6 +629,7 @@ async function createRoom(name) {
     const { code } = await api('POST', 'api/rooms', {
       name, target: TARGET, teamCount: TEAM_COUNT, bonusMode: BONUS_MODE, noDuplicateYears: NO_DUPLICATE_YEARS,
       stealIntentTimeoutSec: STEAL_INTENT_SEC, stealPlaceTimeoutSec: STEAL_PLACE_SEC, stealTieMode: STEAL_TIE_MODE,
+      shuffleTeamOrder: SHUFFLE_TEAM_ORDER,
     });
     connectRoom(code);
   } catch (e) {
@@ -951,6 +953,11 @@ function renderLobby() {
       <label class="bonus-check" style="margin:14px 0;">
         <input type="checkbox" data-action="toggledupyears" ${NO_DUPLICATE_YEARS ? 'checked' : ''}>
         ${t('lobby.dupYears')}
+      </label>
+
+      <label class="bonus-check" style="margin:14px 0;">
+        <input type="checkbox" data-action="toggleshuffleorder" ${SHUFFLE_TEAM_ORDER ? 'checked' : ''}>
+        ${t('lobby.shuffleTeamOrder')}
       </label>
 
       <div class="field-label">${t('lobby.stealIntentLabel')}</div>
@@ -1369,6 +1376,7 @@ function bindEvents() {
     else if (action === 'teamcount') { TEAM_COUNT = parseInt(btn.dataset.t, 10); render(); }
     else if (action === 'bonusmode') { BONUS_MODE = btn.dataset.mode; render(); }
     else if (action === 'toggledupyears') { NO_DUPLICATE_YEARS = btn.checked; render(); }
+    else if (action === 'toggleshuffleorder') { SHUFFLE_TEAM_ORDER = btn.checked; render(); }
     else if (action === 'stealintentsec') { STEAL_INTENT_SEC = parseInt(btn.dataset.t, 10); render(); }
     else if (action === 'stealplacesec') { STEAL_PLACE_SEC = parseInt(btn.dataset.t, 10); render(); }
     else if (action === 'stealtiemode') { STEAL_TIE_MODE = btn.dataset.mode; render(); }

@@ -69,12 +69,18 @@ Android 12 bzw. älter je nach OS-Version.
   NDK 26.1.10909125, echte libnode-Binaries) — kompiliert und paketiert erfolgreich zu
   einer APK. Das prüft, dass der Code compilable ist, **nicht** dass Nearby Connections,
   der eingebettete Node-Server oder die WebView zur Laufzeit korrekt funktionieren.
-- **Auf echten Geräten nicht automatisiert testbar** in dieser Entwicklungsumgebung: kein
-  Android-SDK/-Emulator mit Hardwarebeschleunigung verfügbar (kein `/dev/kvm`), und Nearby
-  Connections braucht ohnehin echte Bluetooth/Wi-Fi-Direct-Radios, die kein Emulator
-  zuverlässig nachbildet. **Vor dem ersten echten Spielabend unbedingt manuell
-  durchspielen** (Login, Raum, Team, Song ziehen/platzieren, Audio — mit und ohne
-  gemeinsames WLAN, siehe Checkliste im Hauptprojekt-Kontext).
+- **Keine automatisierte Geräte-Farm/CI-Abdeckung für echtes Geräteverhalten**
+  (Nearby Connections, der eingebettete Node-Server, die WebView): In dieser
+  Entwicklungsumgebung ist kein Android-Emulator mit Hardwarebeschleunigung
+  verfügbar (kein `/dev/kvm`), und Nearby Connections braucht ohnehin echte
+  Bluetooth/Wi-Fi-Direct-Radios, die kein Emulator zuverlässig nachbildet. In der
+  Praxis wurden die zentralen Abläufe (Hosten/Beitreten, der Nearby-Tunnel,
+  Host-Control, Playlist-Import/-Export) stattdessen vor jedem Release manuell auf
+  echten Geräten per `adb` verifiziert — das ist aber manuelles Testen, keine
+  wiederholbare automatisierte Suite. **Vor dem ersten echten Spielabend mit einem
+  eigenen Fork trotzdem unbedingt manuell durchspielen** (Login, Raum, Team, Song
+  ziehen/platzieren, Audio — mit und ohne gemeinsames WLAN, siehe Checkliste im
+  Hauptprojekt-Kontext).
 
 ## Bekannte Einschränkungen
 

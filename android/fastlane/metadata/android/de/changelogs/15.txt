@@ -1,0 +1,3 @@
+Keine App-Änderungen — dieses Release veröffentlicht das Docker-Image
+zusätzlich für arm64 und arm/v7 (z. B. einen Raspberry Pi), nicht nur
+amd64, und korrigiert ein paar veraltete Aussagen im README.

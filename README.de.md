@@ -63,7 +63,7 @@ cp .env.example .env
 docker compose up -d --build
 ```
 
-Der Container bindet standardmäßig nur an `127.0.0.1:4001` (nicht öffentlich erreichbar) — gedacht
+Der Container bindet standardmäßig nur an `127.0.0.1:3000` (nicht öffentlich erreichbar) — gedacht
 zum Dahinterschalten eines Reverse Proxies, siehe unten. Nutzer- und Playlist-Daten liegen in
 `./data/store.json` (Bind-Mount, übersteht Container-Neustarts). **Aktive Logins nicht** — Sessions
 leben nur im Arbeitsspeicher des Prozesses; nach einem Neustart müssen sich alle neu einloggen
@@ -78,7 +78,7 @@ Bauen des `Dockerfile`:
 ```bash
 docker run -d --name partey-timeline \
   --env-file .env \
-  -p 127.0.0.1:4001:3000 \
+  -p 127.0.0.1:3000:3000 \
   -v "$(pwd)/data:/app/data" \
   ghcr.io/parteytimeline/app:latest
 ```

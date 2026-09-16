@@ -65,7 +65,7 @@ cp .env.example .env
 docker compose up -d --build
 ```
 
-By default the container only binds to `127.0.0.1:4001` (not publicly reachable) —
+By default the container only binds to `127.0.0.1:3000` (not publicly reachable) —
 meant to sit behind a reverse proxy, see below. User and playlist data live in
 `./data/store.json` (bind mount, survives container restarts). **Active logins do
 not** — sessions only live in the process's memory; after a restart everyone has to log
@@ -80,7 +80,7 @@ yourself:
 ```bash
 docker run -d --name partey-timeline \
   --env-file .env \
-  -p 127.0.0.1:4001:3000 \
+  -p 127.0.0.1:3000:3000 \
   -v "$(pwd)/data:/app/data" \
   ghcr.io/parteytimeline/app:latest
 ```

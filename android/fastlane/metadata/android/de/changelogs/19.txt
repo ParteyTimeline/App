@@ -1,0 +1,3 @@
+Behebt zwei Fehler bei "Hosting beenden" (letztes Release): man kommt
+jetzt wirklich zum Startbildschirm zurück, und danach erneut Hosting zu
+starten funktioniert wieder (vorher schlug das danach fehl).

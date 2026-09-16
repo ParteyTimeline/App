@@ -25,19 +25,33 @@ class NodeRuntime(private val context: Context) {
 
         @Volatile
         private var started = false
+
+        // A fresh random secret for this app-process's lifetime (deliberately
+        // NOT persisted — nothing needs it to survive a restart, and not
+        // persisting it keeps its exposure to only this one running process).
+        // Companion-level (one per PROCESS), not per NodeRuntime instance:
+        // startIfNeeded() below only ever actually starts the embedded Node
+        // process once per process (node::Start() can't be cleanly restarted
+        // in-process), so writeEntryPoint() only ever hands it ONE token, on
+        // that first call — a new NodeRuntime object made by a later
+        // HostForegroundService instance (stop hosting, then start again)
+        // must still resolve to that SAME token, or every
+        // /api/local/host-control call after a restart 403s forever (the
+        // running server keeps checking against the original token, no
+        // matter which token this object hands to setLocalJoinEnabled()).
+        private val sharedControlToken: String by lazy {
+            ByteArray(32).let { SecureRandom().nextBytes(it); it.joinToString("") { b -> "%02x".format(b) } }
+        }
     }
 
-    // A fresh random secret per app-process lifetime (deliberately NOT
-    // persisted — nothing needs it to survive a restart, and not persisting
-    // it keeps its exposure to only this one running process). Only
-    // HostForegroundService, which reads this property directly, and the
-    // Node process it's handed to via process.env below, ever see it —
+    // Only HostForegroundService, which reads this property directly, and
+    // the Node process it's handed to via process.env below, ever see it —
     // guards /api/local/host-control (see server.js), a management
     // endpoint that must be unreachable by anyone else who can talk to this
     // server: a browser on the same Wi-Fi, or a Nearby peer, whose tunneled
     // requests are indistinguishable from the app's own by IP alone (both
     // arrive as 127.0.0.1 — see HostTunnelServer).
-    val controlToken: String = ByteArray(32).let { SecureRandom().nextBytes(it); it.joinToString("") { b -> "%02x".format(b) } }
+    val controlToken: String get() = sharedControlToken
 
     private external fun startNodeWithArguments(arguments: Array<String>): Int
 

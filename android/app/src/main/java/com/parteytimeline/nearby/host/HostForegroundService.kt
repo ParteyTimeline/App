@@ -10,6 +10,7 @@ import android.os.Build
 import android.os.IBinder
 import android.util.Log
 import androidx.core.app.NotificationCompat
+import com.parteytimeline.nearby.MainActivity
 import com.parteytimeline.nearby.nearby.NearbyHost
 import com.parteytimeline.nearby.node.NodeRuntime
 import java.net.HttpURLConnection
@@ -55,6 +56,17 @@ class HostForegroundService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_STOP) {
+            // Don't rely solely on the WS-based 'hostStopped' kick to get the
+            // host back to a sane screen — that only fires if GameWebViewActivity
+            // still has a live connection when this runs, which isn't
+            // guaranteed (app backgrounded, WebView JS throttled, or the host
+            // never left MainActivity to begin with). Explicitly return to
+            // the start screen instead, clearing GameWebViewActivity off the
+            // stack if it's there.
+            startActivity(
+                Intent(this, MainActivity::class.java)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP),
+            )
             stopSelf()
             return START_NOT_STICKY
         }

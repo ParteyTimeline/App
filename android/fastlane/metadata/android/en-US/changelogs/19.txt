@@ -1,0 +1,3 @@
+Fixes two bugs in "Stop hosting" (added last release): it now actually
+returns the host to the start screen, and starting a new hosting round
+afterwards works again (it silently stopped working before).

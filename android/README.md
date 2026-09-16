@@ -93,8 +93,8 @@ Android 12 or older depending on OS version.
 - **Only the host holds a foreground notification** (`HostForegroundService`) — peers
   only run for the app's own lifetime; if the app is sent to the background on a peer
   device, the connection can drop.
-- Many simultaneous peers under load and app icon/branding are deliberately not part
-  of this first version.
+- Many simultaneous peers under load is deliberately not part of this first
+  version.
 
 ## Reconnecting after a dropped connection
 

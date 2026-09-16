@@ -95,8 +95,8 @@ Android 12 bzw. älter je nach OS-Version.
 - **Nur der Host hält eine Foreground-Notification** (`HostForegroundService`) — Peers
   laufen nur innerhalb der App-Lebensdauer; wird die App auf einem Peer-Gerät in den
   Hintergrund geschickt, kann die Verbindung abbrechen.
-- Viele gleichzeitige Peers unter Last und App-Icon/Branding sind bewusst nicht Teil
-  dieser ersten Version.
+- Viele gleichzeitige Peers unter Last sind bewusst nicht Teil dieser ersten
+  Version.
 
 ## Neuverbindung nach Verbindungsabbruch
 

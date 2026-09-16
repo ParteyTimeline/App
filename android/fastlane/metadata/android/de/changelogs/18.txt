@@ -1,0 +1,2 @@
+Neue Aktion "Hosting beenden" in der Hosting-Benachrichtigung — beendet
+das Spiel und trennt alle Mitspieler, ohne die App wieder öffnen zu müssen.

@@ -16,6 +16,7 @@
     <string name="notification_channel_host">Partey Timeline Host</string>
     <string name="host_fallback_name">Partey Host</string>
     <string name="notification_text_hosting">Running — other devices can now join</string>
+    <string name="notification_action_stop">Stop hosting</string>
     <string name="lang_switch_content_description">Switch language</string>
     <string name="status_reconnecting">Connection lost — reconnecting…</string>
     <string name="status_reconnect_failed">Could not reconnect. Returning to the start screen…</string>

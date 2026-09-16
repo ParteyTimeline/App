@@ -148,6 +148,21 @@ class MainActivity : AppCompatActivity() {
         service.nearbyHost.onPeerConnected = { _, name ->
             runOnUiThread { tvStatus.text = "${getString(R.string.status_hosting)}\n${getString(R.string.status_connected_to, name)}" }
         }
+        // Hosting can now also end via the notification's "Stop hosting"
+        // action while this screen sits in the background (or is returned
+        // to from GameWebViewActivity, which reacts to the same shutdown via
+        // its own 'hostStopped' WS handler) — without this, tvStatus/
+        // btnContinueToGame would keep showing a host that's no longer
+        // running. startJoining() below clears this callback first when IT
+        // is the one stopping the service, so this only fires for the
+        // "external" stop.
+        service.onStopped = {
+            runOnUiThread {
+                tvStatus.text = ""
+                lanCard.visibility = android.view.View.GONE
+                findViewById<Button>(R.id.btnContinueToGame).visibility = android.view.View.GONE
+            }
+        }
     }
 
     private fun startJoining() {
@@ -156,6 +171,11 @@ class MainActivity : AppCompatActivity() {
         // the embedded Node server itself keeps running in this same app
         // process either way (NodeRuntime is a one-shot, not restarted per
         // service instance), so nothing about it needs cleanup here.
+        // Clear onStopped first: this is OUR OWN deliberate stop, and we set
+        // the join UI ourselves right below — the callback exists for the
+        // notification's stop action resetting a now-stale "Hosting…" screen,
+        // not for overwriting whatever UI we're about to show here instead.
+        HostForegroundService.instance?.onStopped = null
         stopService(Intent(this, HostForegroundService::class.java))
         findViewById<Button>(R.id.btnContinueToGame).visibility = android.view.View.GONE
         lanCard.visibility = android.view.View.GONE

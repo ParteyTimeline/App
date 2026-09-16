@@ -1,0 +1,2 @@
+Added a "Stop hosting" action to the hosting notification, so you can end
+the game and disconnect everyone without having to reopen the app.

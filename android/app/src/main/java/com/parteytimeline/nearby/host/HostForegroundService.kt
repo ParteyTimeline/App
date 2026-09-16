@@ -3,6 +3,7 @@ package com.parteytimeline.nearby.host
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.app.PendingIntent
 import android.app.Service
 import android.content.Intent
 import android.os.Build
@@ -17,6 +18,7 @@ import java.net.URL
 const val HOST_PORT = 3000
 private const val NOTIFICATION_CHANNEL_ID = "partey_host"
 private const val NOTIFICATION_ID = 1
+private const val ACTION_STOP = "com.parteytimeline.nearby.host.STOP"
 
 /**
  * Keeps the embedded Node server and Nearby Connections advertising alive
@@ -35,6 +37,11 @@ class HostForegroundService : Service() {
     lateinit var nearbyHost: NearbyHost
         private set
 
+    // Lets MainActivity keep its "Hosting…" UI in sync when hosting ends via
+    // the notification's stop action rather than the in-app join/host toggle
+    // it already knows about — see hookHostCallbacks() in MainActivity.kt.
+    var onStopped: (() -> Unit)? = null
+
     override fun onCreate() {
         super.onCreate()
         nodeRuntime = NodeRuntime(applicationContext)
@@ -47,6 +54,10 @@ class HostForegroundService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (intent?.action == ACTION_STOP) {
+            stopSelf()
+            return START_NOT_STICKY
+        }
         startForeground(NOTIFICATION_ID, buildNotification())
         nodeRuntime.startIfNeeded(HOST_PORT)
         nearbyHost.startAdvertising()
@@ -64,6 +75,7 @@ class HostForegroundService : Service() {
         // stopAllEndpoints()).
         setLocalJoinEnabled(false)
         if (instance === this) instance = null
+        onStopped?.invoke()
         super.onDestroy()
     }
 
@@ -103,11 +115,17 @@ class HostForegroundService : Service() {
             )
             getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
         }
+        val stopIntent = Intent(this, HostForegroundService::class.java).setAction(ACTION_STOP)
+        val stopPendingIntent = PendingIntent.getService(
+            this, 0, stopIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
         return NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_ID)
             .setContentTitle(getString(com.parteytimeline.nearby.R.string.app_name))
             .setContentText(getString(com.parteytimeline.nearby.R.string.notification_text_hosting))
             .setSmallIcon(android.R.drawable.ic_media_play)
             .setOngoing(true)
+            .addAction(android.R.drawable.ic_menu_close_clear_cancel, getString(com.parteytimeline.nearby.R.string.notification_action_stop), stopPendingIntent)
             .build()
     }
 

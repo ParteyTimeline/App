@@ -45,12 +45,23 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # Needed to build the arm64/arm/v7 platforms below on this amd64
+      # runner — buildx cross-compiles under QEMU emulation instead of
+      # needing native arm hardware.
+      - uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64,arm
+
       - uses: docker/setup-buildx-action@v3
 
       - uses: docker/build-push-action@v6
         with:
           context: .
           push: true
+          # amd64 for normal servers/VPSes, arm64 for a 64-bit Raspberry Pi
+          # (or similar SBC), arm/v7 for a 32-bit one — self-hosting this on
+          # a Pi sitting on a shelf is a common case for a party game server.
+          platforms: linux/amd64,linux/arm64,linux/arm/v7
           tags: |
             ${{ steps.version.outputs.image }}:${{ steps.version.outputs.version }}
             ${{ steps.version.outputs.image }}:latest

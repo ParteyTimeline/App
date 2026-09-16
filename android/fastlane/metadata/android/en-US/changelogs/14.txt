@@ -1,0 +1,2 @@
+Fixed the "Delete" button in playlist management being nearly
+unreadable in dark mode (dark red text on a dark background).

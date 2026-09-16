@@ -1,0 +1,2 @@
+Behoben, dass der "Löschen"-Button in der Playlist-Verwaltung im
+Dark Mode kaum lesbar war (dunkelrote Schrift auf dunklem Hintergrund).

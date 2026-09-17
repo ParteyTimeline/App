@@ -84,7 +84,7 @@ docker run -d --name partey-timeline \
 ```
 
 `:latest` zeigt immer auf das neueste Release; eine bestimmte Version stattdessen mit
-z. B. `ghcr.io/parteytimeline/app:0.5.8` fixieren (der Tag entspricht dem
+z. B. `ghcr.io/parteytimeline/app:0.6.0` fixieren (der Tag entspricht dem
 `android-vX.Y.Z`-Release der App, ohne das `android-v`-Präfix). In `docker-compose.yml`
 `build: .` durch `image: ghcr.io/parteytimeline/app:latest` ersetzen, um dasselbe zu
 erreichen.

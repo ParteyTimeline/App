@@ -83,10 +83,26 @@
             android:name=".GameWebViewActivity"
             android:exported="false" />
 
+        <!-- Runs in its own process so "stop hosting" can fully kill the
+             embedded Node runtime (see HostForegroundService.onDestroy()) —
+             nodejs-mobile's node::Start() can't be cleanly restarted within
+             one process, so this is the only way to get a genuinely clean
+             slate on the next "start hosting" instead of one Node process
+             quietly living for the app's entire lifetime. -->
         <service
             android:name=".host.HostForegroundService"
             android:exported="false"
+            android:process=":host"
             android:foregroundServiceType="connectedDevice" />
+
+        <!-- Same process as HostForegroundService — lets MainActivity/
+             GameWebViewActivity (main process) read the host-control token
+             across the process boundary. See ControlTokenProvider.kt. -->
+        <provider
+            android:name=".host.ControlTokenProvider"
+            android:authorities="com.parteytimeline.nearby.hostcontrol"
+            android:exported="false"
+            android:process=":host" />
 
     </application>
 </manifest>

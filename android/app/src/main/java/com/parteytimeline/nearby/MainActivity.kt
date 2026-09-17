@@ -1,5 +1,7 @@
 package com.parteytimeline.nearby
 
+import android.content.BroadcastReceiver
+import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.os.Bundle
@@ -15,6 +17,7 @@ import androidx.core.content.ContextCompat
 import androidx.core.os.LocaleListCompat
 import com.parteytimeline.nearby.host.HOST_PORT
 import com.parteytimeline.nearby.host.HostForegroundService
+import com.parteytimeline.nearby.host.HostIpcContract
 import com.parteytimeline.nearby.host.LanShareInfo
 import com.parteytimeline.nearby.nearby.NearbyHostCandidate
 import com.parteytimeline.nearby.nearby.NearbyPeer
@@ -43,6 +46,34 @@ class MainActivity : AppCompatActivity() {
             pendingAction = null
         }
 
+    // HostForegroundService now runs in a separate :host process (see
+    // AndroidManifest.xml) — it can no longer hand this activity a same-
+    // process callback closure, so these events cross as real broadcasts
+    // instead (see HostIpcContract.kt). Registered up front in onCreate(),
+    // so unlike the old singleton-polling approach there's no dependency on
+    // how quickly the other process finishes starting.
+    private val hostEventsReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            when (intent.action) {
+                HostIpcContract.ACTION_PEER_CONNECTED -> {
+                    val name = intent.getStringExtra(HostIpcContract.EXTRA_ENDPOINT_NAME) ?: return
+                    tvStatus.text = "${getString(R.string.status_hosting)}\n${getString(R.string.status_connected_to, name)}"
+                }
+                HostIpcContract.ACTION_HOST_STOPPED -> {
+                    // The notification's "Stop hosting" action ended a session
+                    // this screen (or GameWebViewActivity, on top of it) didn't
+                    // initiate itself — reset back to the idle state startJoining()
+                    // and startHosting() themselves show their own next state
+                    // for the stop THEY trigger, so this only ever needs to
+                    // undo "Hosting…"'s UI, never overwrite theirs.
+                    tvStatus.text = ""
+                    lanCard.visibility = android.view.View.GONE
+                    findViewById<Button>(R.id.btnContinueToGame).visibility = android.view.View.GONE
+                }
+            }
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
@@ -52,6 +83,8 @@ class MainActivity : AppCompatActivity() {
         tvLanUrl = findViewById(R.id.tvLanUrl)
         ivQr = findViewById(R.id.ivQr)
         listHosts = findViewById(R.id.listHosts)
+
+        ContextCompat.registerReceiver(this, hostEventsReceiver, HostIpcContract.allActions(), ContextCompat.RECEIVER_NOT_EXPORTED)
 
         hostsAdapter = ArrayAdapter(this, android.R.layout.simple_list_item_1)
         listHosts.adapter = hostsAdapter
@@ -112,12 +145,8 @@ class MainActivity : AppCompatActivity() {
         val intent = Intent(this, HostForegroundService::class.java)
         ContextCompat.startForegroundService(this, intent)
 
-        // The service starts asynchronously; poll briefly for it to exist so
-        // we can hook UI callbacks (host itself already works either way —
-        // this only affects how quickly the "peer connected" status updates).
         listHosts.visibility = android.view.View.GONE
         tvStatus.text = getString(R.string.status_hosting)
-        window.decorView.postDelayed({ hookHostCallbacks() }, 300)
 
         // Hosting itself needs no Wi-Fi at all (only the browser/QR join
         // path below does) — advertising keeps running in the background
@@ -143,39 +172,13 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun hookHostCallbacks() {
-        val service = HostForegroundService.instance ?: return
-        service.nearbyHost.onPeerConnected = { _, name ->
-            runOnUiThread { tvStatus.text = "${getString(R.string.status_hosting)}\n${getString(R.string.status_connected_to, name)}" }
-        }
-        // Hosting can now also end via the notification's "Stop hosting"
-        // action while this screen sits in the background (or is returned
-        // to from GameWebViewActivity, which reacts to the same shutdown via
-        // its own 'hostStopped' WS handler) — without this, tvStatus/
-        // btnContinueToGame would keep showing a host that's no longer
-        // running. startJoining() below clears this callback first when IT
-        // is the one stopping the service, so this only fires for the
-        // "external" stop.
-        service.onStopped = {
-            runOnUiThread {
-                tvStatus.text = ""
-                lanCard.visibility = android.view.View.GONE
-                findViewById<Button>(R.id.btnContinueToGame).visibility = android.view.View.GONE
-            }
-        }
-    }
-
     private fun startJoining() {
-        // Mutually exclusive with hosting — stop advertising/being a host
-        // first (HostForegroundService.onDestroy() tears down NearbyHost);
-        // the embedded Node server itself keeps running in this same app
-        // process either way (NodeRuntime is a one-shot, not restarted per
-        // service instance), so nothing about it needs cleanup here.
-        // Clear onStopped first: this is OUR OWN deliberate stop, and we set
-        // the join UI ourselves right below — the callback exists for the
-        // notification's stop action resetting a now-stale "Hosting…" screen,
-        // not for overwriting whatever UI we're about to show here instead.
-        HostForegroundService.instance?.onStopped = null
+        // Mutually exclusive with hosting — stop being a host first
+        // (HostForegroundService.onDestroy() tears everything down,
+        // including killing the whole :host process — see its own comment).
+        // stoppedViaNotification stays false for this self-initiated stop, so
+        // hostEventsReceiver above won't fire ACTION_HOST_STOPPED and flash
+        // the idle-reset UI over the "discovering" UI set right below.
         stopService(Intent(this, HostForegroundService::class.java))
         findViewById<Button>(R.id.btnContinueToGame).visibility = android.view.View.GONE
         lanCard.visibility = android.view.View.GONE
@@ -217,6 +220,7 @@ class MainActivity : AppCompatActivity() {
     override fun onDestroy() {
         nearbyPeer?.stopDiscovery()
         nearbyPeer?.disconnect()
+        unregisterReceiver(hostEventsReceiver)
         super.onDestroy()
     }
 }

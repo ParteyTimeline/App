@@ -34,6 +34,16 @@ see below. `nearby/NearbyHost.kt`/`NearbyPeer.kt` are the Android-specific glue 
 Nearby Connections API (two STREAM payloads per connection, one per direction, exactly
 like in Google's official `NearbyConnectionsWalkieTalkie` sample).
 
+On the host, `HostForegroundService` (and the embedded Node runtime inside it) runs in
+its own `:host` process (`android:process` in `AndroidManifest.xml`), not the app's main
+process — nodejs-mobile's embedded Node can't be cleanly restarted within one process, so
+this is what lets "stop hosting" (from the app or the notification's action button) end
+with an actual `Process.killProcess()`: a real clean slate, rather than the server quietly
+staying up for the rest of the app's lifetime. `MainActivity`/`GameWebViewActivity` (main
+process) talk to it via `HostIpcContract.kt` (broadcasts for events) and
+`ControlTokenProvider.kt` (a `ContentProvider` for the host-control security token) —
+same-process object references don't cross a process boundary.
+
 ## Setup
 
 1. **Fetch the libnode binaries** (not in Git, ~55 MB, three ABIs):

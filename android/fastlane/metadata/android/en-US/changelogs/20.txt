@@ -1,0 +1,3 @@
+"Stop hosting" now genuinely ends the embedded server (runs it in its
+own process now), instead of quietly leaving it running until the app
+is fully closed. Starting a new hosting round afterwards is unaffected.

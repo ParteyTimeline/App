@@ -1,0 +1,4 @@
+"Hosting beenden" beendet den eingebetteten Server jetzt wirklich (läuft
+nun in einem eigenen Prozess), statt ihn bis zum vollständigen
+Schließen der App weiterlaufen zu lassen. Erneutes Hosting danach
+funktioniert unverändert.

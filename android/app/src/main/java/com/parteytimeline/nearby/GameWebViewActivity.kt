@@ -24,7 +24,7 @@ import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
-import com.parteytimeline.nearby.host.HostForegroundService
+import com.parteytimeline.nearby.host.ControlTokenProvider
 import com.parteytimeline.nearby.nearby.NearbyPeer
 
 private const val EXTRA_PORT = "port"
@@ -166,10 +166,14 @@ class GameWebViewActivity : AppCompatActivity() {
             // the server the same way HostForegroundService's own host-control
             // calls do (see server.js's requireAdmin). Only ever answers for
             // role == "host"; a guest's WebView (Nearby, LAN, or QR) always
-            // gets null here, same as a plain browser would.
+            // gets null here, same as a plain browser would. HostForegroundService
+            // runs in a separate :host process (see AndroidManifest.xml), so this
+            // crosses the process boundary via ControlTokenProvider rather than a
+            // same-process field read — see its own comment for why a
+            // ContentProvider specifically avoids a cold-start race here.
             @android.webkit.JavascriptInterface
             fun getControlToken(): String? =
-                if (role == "host") HostForegroundService.instance?.nodeRuntime?.controlToken else null
+                if (role == "host") ControlTokenProvider.readBlocking(applicationContext) else null
         }, "AndroidLocalBridge")
         webView.loadUrl(url)
 

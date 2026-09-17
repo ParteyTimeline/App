@@ -54,8 +54,8 @@ android {
         applicationId = "com.parteytimeline.nearby"
         minSdk = 26 // covers effectively all real devices in use; simplifies the Nearby Connections permission model
         targetSdk = 34
-        versionCode = 23
-        versionName = "0.6.3"
+        versionCode = 24
+        versionName = "0.7.0"
 
         externalNativeBuild {
             cmake {
@@ -96,7 +96,8 @@ android {
 
     buildTypes {
         release {
-            isMinifyEnabled = false
+            isMinifyEnabled = true
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
             if (signingPropsFile.exists()) signingConfig = signingConfigs.getByName("release")
         }
     }
@@ -125,6 +126,11 @@ dependencies {
     implementation("com.google.zxing:core:3.5.3")
 
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
+
+    // Formalizes NearbyPeer/NearbyHost/MainActivity's connection and screen
+    // states (was scattered booleans) — tiny, zero-dependency Kotlin DSL.
+    // Resolved via JitPack (see settings.gradle.kts), not Maven Central.
+    implementation("com.github.Tinder:StateMachine:0.3.0")
 
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.8.1")

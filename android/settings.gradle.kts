@@ -10,6 +10,9 @@ dependencyResolutionManagement {
     repositories {
         google()
         mavenCentral()
+        // Tinder/StateMachine isn't published to Maven Central — it's
+        // resolved straight from its GitHub repo via JitPack instead.
+        maven("https://jitpack.io")
     }
 }
 

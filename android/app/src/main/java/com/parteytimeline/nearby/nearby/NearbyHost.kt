@@ -19,11 +19,29 @@ import com.parteytimeline.nearby.tunnel.HostTunnelServer
 import com.parteytimeline.nearby.tunnel.MuxFrameType
 import com.parteytimeline.nearby.tunnel.MuxWriter
 import com.parteytimeline.nearby.tunnel.tunnelLog
+import com.tinder.StateMachine
 import java.io.IOException
 import java.io.OutputStream
 
 const val NEARBY_SERVICE_ID = "com.parteytimeline.nearby.GAME"
 private const val TAG = "PT-NearbyHost"
+
+// The original design has no distinct "actively advertising" vs "retrying"
+// state to speak of — just one persistent retry-attempt counter (reset on
+// success, incremented on failure) and a terminal "stopped" kill switch
+// checked before ever scheduling another retry. Modeled as exactly that,
+// rather than inventing a state split the original code never branches on.
+sealed class HostState {
+    data class Active(val retryAttempt: Int) : HostState()
+    object Stopped : HostState()
+}
+
+sealed class HostEvent {
+    object Start : HostEvent()
+    object AdvertisingSucceeded : HostEvent()
+    object AdvertisingFailed : HostEvent()
+    object Stop : HostEvent()
+}
 
 /**
  * Host side of "play nearby without a server": advertises this device,
@@ -45,8 +63,21 @@ class NearbyHost(context: Context, private val targetPort: Int, private val disp
     private val tunnels = mutableMapOf<String, HostTunnelServer>()
     private val outgoingOutputs = mutableMapOf<String, OutputStream>()
     private val endpointNames = mutableMapOf<String, String>()
-    private var stopped = false
-    private var advertisingRetryAttempt = 0
+
+    // Side effects (client.startAdvertising/stop/etc.) stay exactly where
+    // they always were — this only replaces `stopped`/`advertisingRetryAttempt`
+    // with a single formal record of the same two facts.
+    private val machine = StateMachine.create<HostState, HostEvent, Unit> {
+        initialState(HostState.Active(0))
+        state<HostState.Active> {
+            on<HostEvent.AdvertisingSucceeded> { transitionTo(HostState.Active(0)) }
+            on<HostEvent.AdvertisingFailed> { transitionTo(HostState.Active(retryAttempt + 1)) }
+            on<HostEvent.Stop> { transitionTo(HostState.Stopped) }
+        }
+        state<HostState.Stopped> {
+            on<HostEvent.Start> { transitionTo(HostState.Active(0)) }
+        }
+    }
 
     init {
         // Wire the tunnel package's injectable logger to Log now that we're
@@ -67,10 +98,13 @@ class NearbyHost(context: Context, private val targetPort: Int, private val disp
     // (e.g. a transient GMS/Bluetooth error) — retried here with backoff so
     // the host doesn't silently become invisible to new/reconnecting peers.
     fun startAdvertising() {
-        stopped = false
+        // A no-op unless we're currently Stopped (mirrors the original's
+        // unconditional `stopped = false` — harmless to "clear" a stop that
+        // was never in effect).
+        machine.transition(HostEvent.Start)
         val options = AdvertisingOptions.Builder().setStrategy(Strategy.P2P_STAR).build()
         client.startAdvertising(displayName, NEARBY_SERVICE_ID, connectionLifecycleCallback, options)
-            .addOnSuccessListener { advertisingRetryAttempt = 0 }
+            .addOnSuccessListener { machine.transition(HostEvent.AdvertisingSucceeded) }
             .addOnFailureListener { e ->
                 onAdvertisingFailed?.invoke(e)
                 retryAdvertising()
@@ -78,14 +112,17 @@ class NearbyHost(context: Context, private val targetPort: Int, private val disp
     }
 
     private fun retryAdvertising() {
-        if (stopped || advertisingRetryAttempt >= MAX_ADVERTISING_RETRIES) return
-        advertisingRetryAttempt++
-        val delay = minOf(RETRY_BASE_DELAY_MS * (1L shl minOf(advertisingRetryAttempt - 1, 3)), RETRY_MAX_DELAY_MS)
-        handler.postDelayed({ if (!stopped) startAdvertising() }, delay)
+        if (machine.state == HostState.Stopped) return
+        val current = (machine.state as? HostState.Active)?.retryAttempt ?: return
+        if (current >= MAX_ADVERTISING_RETRIES) return
+        machine.transition(HostEvent.AdvertisingFailed)
+        val next = current + 1
+        val delay = minOf(RETRY_BASE_DELAY_MS * (1L shl minOf(next - 1, 3)), RETRY_MAX_DELAY_MS)
+        handler.postDelayed({ if (machine.state != HostState.Stopped) startAdvertising() }, delay)
     }
 
     fun stop() {
-        stopped = true
+        machine.transition(HostEvent.Stop)
         handler.removeCallbacksAndMessages(null)
         client.stopAdvertising()
         client.stopAllEndpoints()

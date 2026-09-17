@@ -22,6 +22,27 @@ import com.parteytimeline.nearby.host.LanShareInfo
 import com.parteytimeline.nearby.nearby.NearbyHostCandidate
 import com.parteytimeline.nearby.nearby.NearbyPeer
 import com.parteytimeline.nearby.nearby.NearbyPermissions
+import com.tinder.StateMachine
+
+// What this screen is currently showing — replaces the old `isHosting`
+// boolean plus the untracked "connecting to a picked host" text change
+// (now its own real state, ConnectingToHost, instead of a bare mutation
+// with nothing recording it).
+sealed class ScreenState {
+    object Idle : ScreenState()
+    data class Hosting(val connectedPeerName: String? = null) : ScreenState()
+    object Discovering : ScreenState()
+    data class ConnectingToHost(val endpointId: String) : ScreenState()
+}
+
+sealed class ScreenEvent {
+    object StartHosting : ScreenEvent()
+    data class PeerConnected(val name: String) : ScreenEvent()
+    object StartDiscovering : ScreenEvent()
+    data class AttemptConnect(val endpointId: String) : ScreenEvent()
+    object ConnectFailed : ScreenEvent()
+    object BackToIdle : ScreenEvent()
+}
 
 class MainActivity : AppCompatActivity() {
 
@@ -35,6 +56,35 @@ class MainActivity : AppCompatActivity() {
     private var nearbyPeer: NearbyPeer? = null
     private val discoveredHosts = mutableListOf<NearbyHostCandidate>()
     private lateinit var hostsAdapter: ArrayAdapter<String>
+
+    // Side effects (view mutations) stay exactly where they always were,
+    // right next to the transition that corresponds to them — this machine
+    // only replaces the old `isHosting` boolean and the untracked
+    // "connecting" text change with a single formal record of what screen
+    // is actually showing.
+    private val machine = StateMachine.create<ScreenState, ScreenEvent, Unit> {
+        initialState(ScreenState.Idle)
+        state<ScreenState.Idle> {
+            on<ScreenEvent.StartHosting> { transitionTo(ScreenState.Hosting()) }
+            on<ScreenEvent.StartDiscovering> { transitionTo(ScreenState.Discovering) }
+        }
+        state<ScreenState.Hosting> {
+            on<ScreenEvent.PeerConnected> { transitionTo(ScreenState.Hosting(it.name)) }
+            on<ScreenEvent.StartDiscovering> { transitionTo(ScreenState.Discovering) }
+            on<ScreenEvent.BackToIdle> { transitionTo(ScreenState.Idle) }
+        }
+        state<ScreenState.Discovering> {
+            on<ScreenEvent.StartHosting> { transitionTo(ScreenState.Hosting()) }
+            on<ScreenEvent.AttemptConnect> { transitionTo(ScreenState.ConnectingToHost(it.endpointId)) }
+            on<ScreenEvent.BackToIdle> { transitionTo(ScreenState.Idle) }
+        }
+        state<ScreenState.ConnectingToHost> {
+            on<ScreenEvent.StartHosting> { transitionTo(ScreenState.Hosting()) }
+            on<ScreenEvent.StartDiscovering> { transitionTo(ScreenState.Discovering) }
+            on<ScreenEvent.ConnectFailed> { transitionTo(ScreenState.Discovering) }
+            on<ScreenEvent.BackToIdle> { transitionTo(ScreenState.Idle) }
+        }
+    }
 
     private val permissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { results ->
@@ -57,6 +107,7 @@ class MainActivity : AppCompatActivity() {
             when (intent.action) {
                 HostIpcContract.ACTION_PEER_CONNECTED -> {
                     val name = intent.getStringExtra(HostIpcContract.EXTRA_ENDPOINT_NAME) ?: return
+                    machine.transition(ScreenEvent.PeerConnected(name))
                     tvStatus.text = "${getString(R.string.status_hosting)}\n${getString(R.string.status_connected_to, name)}"
                 }
                 HostIpcContract.ACTION_HOST_STOPPED -> {
@@ -66,6 +117,7 @@ class MainActivity : AppCompatActivity() {
                     // and startHosting() themselves show their own next state
                     // for the stop THEY trigger, so this only ever needs to
                     // undo "Hosting…"'s UI, never overwrite theirs.
+                    machine.transition(ScreenEvent.BackToIdle)
                     tvStatus.text = ""
                     lanCard.visibility = android.view.View.GONE
                     findViewById<Button>(R.id.btnContinueToGame).visibility = android.view.View.GONE
@@ -90,6 +142,7 @@ class MainActivity : AppCompatActivity() {
         listHosts.adapter = hostsAdapter
         listHosts.setOnItemClickListener { _, _, position, _ ->
             val candidate = discoveredHosts[position]
+            machine.transition(ScreenEvent.AttemptConnect(candidate.endpointId))
             tvStatus.text = getString(R.string.status_connecting)
             nearbyPeer?.connectTo(candidate.endpointId)
         }
@@ -103,6 +156,25 @@ class MainActivity : AppCompatActivity() {
         findViewById<Button>(R.id.btnLangDe).setOnClickListener { setAppLanguage("de") }
         findViewById<Button>(R.id.btnLangEn).setOnClickListener { setAppLanguage("en") }
         updateLangButtons()
+    }
+
+    // Returning here from GameWebViewActivity after the host ended the game
+    // (see its hostStopped()) left this screen showing whatever discovery/
+    // connecting text was on it from BEFORE the game ever started — stale
+    // and confusing ("Verbinde… <host>" for a host that's long gone), since
+    // nothing else ever updates these views once the game screen takes
+    // over. Only reset when genuinely idle: not hosting, and nearbyPeer
+    // isn't legitimately mid-discovery/connection — a background+foreground
+    // cycle during either of those must NOT wipe it.
+    override fun onResume() {
+        super.onResume()
+        if (machine.state !is ScreenState.Hosting && nearbyPeer?.isActive != true) {
+            machine.transition(ScreenEvent.BackToIdle)
+            tvStatus.text = ""
+            discoveredHosts.clear()
+            hostsAdapter.clear()
+            listHosts.visibility = android.view.View.GONE
+        }
     }
 
     // AppCompatDelegate persists the chosen per-app locale itself (automatic
@@ -141,6 +213,7 @@ class MainActivity : AppCompatActivity() {
         nearbyPeer?.stopDiscovery()
         nearbyPeer?.disconnect()
         nearbyPeer = null
+        machine.transition(ScreenEvent.StartHosting)
 
         val intent = Intent(this, HostForegroundService::class.java)
         ContextCompat.startForegroundService(this, intent)
@@ -180,6 +253,7 @@ class MainActivity : AppCompatActivity() {
         // hostEventsReceiver above won't fire ACTION_HOST_STOPPED and flash
         // the idle-reset UI over the "discovering" UI set right below.
         stopService(Intent(this, HostForegroundService::class.java))
+        machine.transition(ScreenEvent.StartDiscovering)
         findViewById<Button>(R.id.btnContinueToGame).visibility = android.view.View.GONE
         lanCard.visibility = android.view.View.GONE
         listHosts.visibility = android.view.View.VISIBLE
@@ -207,7 +281,10 @@ class MainActivity : AppCompatActivity() {
             }
         }
         peer.onConnectionFailed = {
-            runOnUiThread { tvStatus.text = getString(R.string.status_connection_failed) }
+            runOnUiThread {
+                machine.transition(ScreenEvent.ConnectFailed)
+                tvStatus.text = getString(R.string.status_connection_failed)
+            }
         }
         peer.onTunnelReady = { localPort ->
             runOnUiThread {

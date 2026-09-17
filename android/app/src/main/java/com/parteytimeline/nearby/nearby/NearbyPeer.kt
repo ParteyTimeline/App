@@ -23,12 +23,53 @@ import com.parteytimeline.nearby.tunnel.MuxFrameType
 import com.parteytimeline.nearby.tunnel.MuxWriter
 import com.parteytimeline.nearby.tunnel.PeerTunnelClient
 import com.parteytimeline.nearby.tunnel.tunnelLog
+import com.tinder.StateMachine
 import java.io.IOException
 import java.io.OutputStream
 
 data class NearbyHostCandidate(val endpointId: String, val name: String)
 
 private const val TAG = "PT-NearbyPeer"
+
+// Discovery is an independent, simultaneously-active radio operation — you
+// can be Connecting to one host while discovery is still running for
+// others — so it's its own small state machine rather than a field folded
+// into PeerState (which would force every PeerState to carry it) or a
+// plain boolean (which wouldn't be a state machine at all).
+sealed class DiscoveryState {
+    object NotDiscovering : DiscoveryState()
+    object Discovering : DiscoveryState()
+}
+
+sealed class DiscoveryEvent {
+    object Start : DiscoveryEvent()
+    object Stop : DiscoveryEvent()
+}
+
+// The connection lifecycle, formalized instead of the scattered booleans
+// (connecting/manualDisconnect/connectedEndpointId-as-a-flag) this used to
+// be tracked with — see NearbyPeer's class doc for why.
+sealed class PeerState {
+    object Idle : PeerState()
+    data class Connecting(val endpointId: String) : PeerState()
+    data class Connected(val endpointId: String) : PeerState() // Nearby-level connected, tunnel handshake pending
+    data class Active(val endpointId: String) : PeerState() // tunnel confirmed live
+    data class Reconnecting(val attempt: Int) : PeerState()
+    object GaveUp : PeerState()
+}
+
+sealed class PeerEvent {
+    data class AttemptConnect(val endpointId: String) : PeerEvent()
+    data class NearbyConnectSucceeded(val endpointId: String) : PeerEvent()
+    // A first-ever failed attempt (never connected before) doesn't retry —
+    // see scheduleReconnect()'s callers, which decide whether this or
+    // EnterReconnecting is the right event for a given failure/drop.
+    object BackToIdle : PeerEvent()
+    data class EnterReconnecting(val attempt: Int) : PeerEvent()
+    object GiveUp : PeerEvent()
+    data class TunnelActive(val endpointId: String) : PeerEvent()
+    object ManualDisconnect : PeerEvent()
+}
 
 /**
  * Peer/joining side: discovers hosts advertising [NEARBY_SERVICE_ID], and
@@ -51,12 +92,59 @@ class NearbyPeer(context: Context, private val localDisplayName: String) {
     private val handler = Handler(Looper.getMainLooper())
     private var tunnel: PeerTunnelClient? = null
     private var outgoingOutput: OutputStream? = null
-    private var connectedEndpointId: String? = null
 
-    private var discoveryActive = false
-    private var connecting = false
-    private var manualDisconnect = false
-    private var reconnectAttempt = 0
+    private val discoveryMachine = StateMachine.create<DiscoveryState, DiscoveryEvent, Unit> {
+        initialState(DiscoveryState.NotDiscovering)
+        state<DiscoveryState.NotDiscovering> {
+            on<DiscoveryEvent.Start> { transitionTo(DiscoveryState.Discovering) }
+        }
+        state<DiscoveryState.Discovering> {
+            on<DiscoveryEvent.Stop> { transitionTo(DiscoveryState.NotDiscovering) }
+        }
+    }
+
+    // Side effects (client.startDiscovery/requestConnection/etc.) stay
+    // exactly where they always were, right next to the transition that
+    // corresponds to them — this machine only replaces the bookkeeping
+    // booleans, not the Nearby Connections calls themselves.
+    private val machine = StateMachine.create<PeerState, PeerEvent, Unit> {
+        initialState(PeerState.Idle)
+        state<PeerState.Idle> {
+            on<PeerEvent.AttemptConnect> { transitionTo(PeerState.Connecting(it.endpointId)) }
+        }
+        state<PeerState.Connecting> {
+            on<PeerEvent.NearbyConnectSucceeded> { transitionTo(PeerState.Connected(it.endpointId)) }
+            on<PeerEvent.BackToIdle> { transitionTo(PeerState.Idle) }
+            on<PeerEvent.EnterReconnecting> { transitionTo(PeerState.Reconnecting(it.attempt)) }
+            on<PeerEvent.ManualDisconnect> { transitionTo(PeerState.Idle) }
+        }
+        state<PeerState.Connected> {
+            on<PeerEvent.TunnelActive> { transitionTo(PeerState.Active(it.endpointId)) }
+            on<PeerEvent.EnterReconnecting> { transitionTo(PeerState.Reconnecting(it.attempt)) }
+            on<PeerEvent.ManualDisconnect> { transitionTo(PeerState.Idle) }
+        }
+        state<PeerState.Active> {
+            on<PeerEvent.EnterReconnecting> { transitionTo(PeerState.Reconnecting(it.attempt)) }
+            on<PeerEvent.ManualDisconnect> { transitionTo(PeerState.Idle) }
+        }
+        state<PeerState.Reconnecting> {
+            on<PeerEvent.AttemptConnect> { transitionTo(PeerState.Connecting(it.endpointId)) }
+            on<PeerEvent.EnterReconnecting> { transitionTo(PeerState.Reconnecting(it.attempt)) }
+            on<PeerEvent.GiveUp> { transitionTo(PeerState.GaveUp) }
+            on<PeerEvent.ManualDisconnect> { transitionTo(PeerState.Idle) }
+        }
+        state<PeerState.GaveUp> {
+            on<PeerEvent.AttemptConnect> { transitionTo(PeerState.Connecting(it.endpointId)) }
+            on<PeerEvent.ManualDisconnect> { transitionTo(PeerState.Idle) }
+        }
+    }
+
+    // Lets MainActivity tell a genuinely idle peer (discovery stopped,
+    // nothing connecting, no tunnel) apart from one still legitimately
+    // mid-flight — see its onResume().
+    val isActive: Boolean
+        get() = discoveryMachine.state == DiscoveryState.Discovering ||
+            (machine.state != PeerState.Idle && machine.state != PeerState.GaveUp)
 
     // Endpoints currently visible via discovery, so a reconnect attempt can
     // target the same host without waiting for a fresh onHostFound if it's
@@ -79,22 +167,21 @@ class NearbyPeer(context: Context, private val localDisplayName: String) {
     var onReconnectGaveUp: (() -> Unit)? = null
 
     fun startDiscovery() {
-        if (discoveryActive) return
+        if (discoveryMachine.state == DiscoveryState.Discovering) return
         val options = DiscoveryOptions.Builder().setStrategy(Strategy.P2P_STAR).build()
         client.startDiscovery(NEARBY_SERVICE_ID, endpointDiscoveryCallback, options)
-        discoveryActive = true
+        discoveryMachine.transition(DiscoveryEvent.Start)
     }
 
     fun stopDiscovery() {
-        if (!discoveryActive) return
+        if (discoveryMachine.state != DiscoveryState.Discovering) return
         client.stopDiscovery()
-        discoveryActive = false
+        discoveryMachine.transition(DiscoveryEvent.Stop)
     }
 
     fun connectTo(endpointId: String) {
-        if (connecting) return
-        connecting = true
-        manualDisconnect = false
+        if (machine.state is PeerState.Connecting) return
+        machine.transition(PeerEvent.AttemptConnect(endpointId))
         onConnecting?.invoke(endpointId)
         // NON_DISRUPTIVE just avoids changing Wi-Fi/Bluetooth state for a
         // bandwidth upgrade we don't need — harmless to keep, but NOT what
@@ -107,20 +194,26 @@ class NearbyPeer(context: Context, private val localDisplayName: String) {
             .build()
         client.requestConnection(localDisplayName, endpointId, connectionLifecycleCallback, connectionOptions)
             .addOnFailureListener {
-                connecting = false
                 onConnectionFailed?.invoke(endpointId)
-                if (!manualDisconnect && lastEndpointId != null) scheduleReconnect()
+                if (lastEndpointId != null) scheduleReconnect() else machine.transition(PeerEvent.BackToIdle)
             }
     }
 
     /** Explicit, deliberate teardown (e.g. the activity is going away) — no automatic reconnect follows this. */
     fun disconnect() {
-        manualDisconnect = true
+        // Captured before transitioning: only meaningful while Nearby-level
+        // connected (Connected/Active), matching what today's disconnect
+        // actually tears down — not a merely in-flight Connecting attempt.
+        val connectedId = when (val s = machine.state) {
+            is PeerState.Connected -> s.endpointId
+            is PeerState.Active -> s.endpointId
+            else -> null
+        }
+        machine.transition(PeerEvent.ManualDisconnect)
         handler.removeCallbacksAndMessages(null)
-        reconnectAttempt = 0
         lastEndpointId = null
         lastEndpointName = null
-        connectedEndpointId?.let { client.disconnectFromEndpoint(it) }
+        connectedId?.let { client.disconnectFromEndpoint(it) }
         teardownTunnel()
         stopDiscovery()
         if (current === this) current = null
@@ -146,21 +239,14 @@ class NearbyPeer(context: Context, private val localDisplayName: String) {
 
         override fun onConnectionResult(endpointId: String, resolution: ConnectionResolution) {
             Log.d(TAG, "onConnectionResult($endpointId, success=${resolution.status.isSuccess}, statusCode=${resolution.status.statusCode})")
-            connecting = false
             if (!resolution.status.isSuccess) {
                 onConnectionFailed?.invoke(endpointId)
-                if (!manualDisconnect && lastEndpointId != null) scheduleReconnect()
+                if (lastEndpointId != null) scheduleReconnect() else machine.transition(PeerEvent.BackToIdle)
                 return
             }
-            connectedEndpointId = endpointId
+            machine.transition(PeerEvent.NearbyConnectSucceeded(endpointId))
             lastEndpointId = endpointId
             lastEndpointName = visibleEndpoints[endpointId] ?: lastEndpointName
-            // reconnectAttempt is reset once the tunnel actually starts
-            // (see onPayloadReceived below), not here — a Nearby-level
-            // "success" doesn't mean the tunnel handshake will ever
-            // actually complete (see the watchdog just below), and
-            // resetting here would restart backoff from attempt 1 on every
-            // failed handshake, defeating the growing delay/attempt cap.
             sendOutgoingStream(endpointId)
             // Nearby Connections can report a successful connection and then
             // silently never deliver either side's Payload at all — observed
@@ -169,7 +255,7 @@ class NearbyPeer(context: Context, private val localDisplayName: String) {
             // waiting on the host's payload (no tunnel yet) after this
             // window, treat the link as dead ourselves.
             handler.postDelayed({
-                if (connectedEndpointId == endpointId && tunnel == null) {
+                if (machine.state == PeerState.Connected(endpointId)) {
                     Log.w(TAG, "No payload received from host within watchdog window for $endpointId — treating link as stalled")
                     client.disconnectFromEndpoint(endpointId)
                 }
@@ -178,27 +264,33 @@ class NearbyPeer(context: Context, private val localDisplayName: String) {
 
         override fun onDisconnected(endpointId: String) {
             Log.d(TAG, "onDisconnected($endpointId)")
-            connecting = false
             teardownTunnel()
             onDisconnected?.invoke()
-            if (!manualDisconnect) scheduleReconnect()
+            // A manual disconnect() already moved this to Idle/GaveUp before
+            // calling client.disconnectFromEndpoint() itself, which is what
+            // triggers this very callback — without this check, a manual
+            // stop would immediately schedule a pointless reconnect.
+            if (machine.state != PeerState.Idle && machine.state != PeerState.GaveUp) scheduleReconnect()
         }
     }
 
     private fun scheduleReconnect() {
-        if (reconnectAttempt >= MAX_RECONNECT_ATTEMPTS) {
+        val current = (machine.state as? PeerState.Reconnecting)?.attempt ?: 0
+        if (current >= MAX_RECONNECT_ATTEMPTS) {
+            machine.transition(PeerEvent.GiveUp)
             onReconnectGaveUp?.invoke()
             return
         }
-        reconnectAttempt++
-        onReconnecting?.invoke(reconnectAttempt)
+        val next = current + 1
+        machine.transition(PeerEvent.EnterReconnecting(next))
+        onReconnecting?.invoke(next)
         startDiscovery()
-        val delay = minOf(RECONNECT_BASE_DELAY_MS * (1L shl minOf(reconnectAttempt - 1, 3)), RECONNECT_MAX_DELAY_MS)
+        val delay = minOf(RECONNECT_BASE_DELAY_MS * (1L shl minOf(next - 1, 3)), RECONNECT_MAX_DELAY_MS)
         handler.postDelayed({ attemptReconnect() }, delay)
     }
 
     private fun attemptReconnect() {
-        if (manualDisconnect || connecting) return
+        if (machine.state !is PeerState.Reconnecting) return
         val targetId = lastEndpointId?.takeIf { visibleEndpoints.containsKey(it) }
             ?: lastEndpointName?.let { name -> visibleEndpoints.entries.firstOrNull { it.value == name }?.key }
         if (targetId != null) {
@@ -258,7 +350,11 @@ class NearbyPeer(context: Context, private val localDisplayName: String) {
                 client.disconnectFromEndpoint(endpointId)
             }
             val localPort = tunnelClient.start()
-            reconnectAttempt = 0 // only now that the tunnel has actually started, not just "Nearby connected" (see onConnectionResult)
+            // reconnectAttempt resets naturally here: Active carries no
+            // attempt count, so the NEXT drop's scheduleReconnect() reads
+            // `current = 0` again — only now that the tunnel has actually
+            // started, not just "Nearby connected" (see onConnectionResult).
+            machine.transition(PeerEvent.TunnelActive(endpointId))
             Log.d(TAG, "PeerTunnelClient started on localPort=$localPort for $endpointId")
             onTunnelReady?.invoke(localPort)
             handler.postDelayed({
@@ -283,7 +379,6 @@ class NearbyPeer(context: Context, private val localDisplayName: String) {
         tunnel = null
         outgoingOutput?.let { runCatching { it.close() } }
         outgoingOutput = null
-        connectedEndpointId = null
     }
 
     init {

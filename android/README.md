@@ -44,6 +44,20 @@ process) talk to it via `HostIpcContract.kt` (broadcasts for events) and
 `ControlTokenProvider.kt` (a `ContentProvider` for the host-control security token) —
 same-process object references don't cross a process boundary.
 
+`NearbyPeer`'s connection lifecycle (idle → discovering → connecting → connected → active
+→ reconnecting → given up), `NearbyHost`'s advertising/retry state, and `MainActivity`'s
+screen mode are each formalized with [Tinder/StateMachine](https://github.com/Tinder/StateMachine)
+(resolved via JitPack, not Maven Central — see `settings.gradle.kts`) instead of the ad hoc
+booleans they used to be — a real bug (a stale "reconnecting…" banner surviving past when
+the host had actually stopped) came directly from those booleans drifting out of sync with
+each other. Side effects (the actual Nearby Connections/view calls) stay exactly where
+they were; only the state bookkeeping moved into the machine.
+
+The release build type runs with R8 minification on (`isMinifyEnabled = true`) —
+`app/proguard-rules.pro` keeps the WebView JS bridge (`@JavascriptInterface` methods,
+would otherwise get renamed/stripped and fail silently at runtime) and `NodeRuntime`'s
+`external` JNI method (resolved by name via the native lib, same risk).
+
 ## Setup
 
 1. **Fetch the libnode binaries** (not in Git, ~55 MB, three ABIs):

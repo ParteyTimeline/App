@@ -1,0 +1,4 @@
+Internal rework: connection/session state is now tracked with a proper
+state machine instead of scattered flags, fixing a stale "reconnecting…"
+message that could survive after the host had already stopped. Also
+enables code shrinking for a smaller app. No visible feature changes.

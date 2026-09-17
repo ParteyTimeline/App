@@ -1,0 +1,5 @@
+Interne Überarbeitung: Verbindungs-/Sitzungszustand wird jetzt über eine
+richtige Zustandsmaschine statt verstreuter Flags verwaltet — behebt
+eine veraltete "verbinde neu…"-Meldung, die stehenbleiben konnte,
+obwohl der Host schon gestoppt hatte. Aktiviert außerdem Code-Shrinking
+für eine kleinere App. Keine sichtbaren Funktionsänderungen.

@@ -45,6 +45,22 @@ weiterläuft. `MainActivity`/`GameWebViewActivity` (Hauptprozess) sprechen ihn �
 `ContentProvider` für das Sicherheits-Token) an — Referenzen auf Objekte im selben Prozess
 funktionieren über eine Prozessgrenze hinweg nicht.
 
+Der Verbindungs-Lebenszyklus von `NearbyPeer` (idle → discovering → connecting →
+connected → active → reconnecting → given up), der Advertising/Retry-Zustand von
+`NearbyHost` und der Bildschirm-Modus von `MainActivity` sind jeweils mit
+[Tinder/StateMachine](https://github.com/Tinder/StateMachine) formalisiert (über JitPack
+aufgelöst, nicht Maven Central — siehe `settings.gradle.kts`) statt der bisherigen ad-hoc
+Booleans. Ein echter Bug (eine veraltete "verbinde neu…"-Anzeige, die noch zu sehen war,
+obwohl der Host längst gestoppt hatte) kam genau daher, dass diese Booleans
+auseinanderliefen. Die eigentlichen Seiteneffekte (Nearby-Connections-/View-Aufrufe)
+bleiben unverändert an ihrer Stelle — nur die Zustandsverwaltung wandert in die Maschine.
+
+Der Release-Build läuft mit aktivierter R8-Minifizierung (`isMinifyEnabled = true`) —
+`app/proguard-rules.pro` schützt die WebView-JS-Bridge (`@JavascriptInterface`-Methoden,
+die sonst umbenannt/entfernt würden und erst zur Laufzeit lautlos fehlschlagen) und
+`NodeRuntime`s `external`-JNI-Methode (wird über die native Lib per Namen aufgelöst,
+gleiches Risiko).
+
 ## Setup
 
 1. **libnode-Binaries laden** (nicht im Git, ~55 MB, drei ABIs):

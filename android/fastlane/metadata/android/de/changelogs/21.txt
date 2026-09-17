@@ -1,0 +1,4 @@
+Behebt den Playlist-Import über "Playlisten verwalten" auf dem
+Host-Gerät, der mit "Admin-Funktionen nicht konfiguriert"
+fehlschlug — die Import-Anfrage sendete nicht dieselbe lokale
+Authentifizierung, die andere Admin-Aktionen bereits nutzen.

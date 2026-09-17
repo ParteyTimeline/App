@@ -1,0 +1,4 @@
+Fixes importing a playlist from the host's own "Manage playlists"
+screen, which was failing with an "admin functions not configured"
+error — the import request wasn't sending the same local
+authentication other admin actions already use.

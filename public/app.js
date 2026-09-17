@@ -437,9 +437,16 @@ async function importPlaylist(file) {
   IMPORTING_PLAYLIST = true; LOBBY_ERROR = ''; LOBBY_NOTE = ''; render();
   try {
     const buf = await file.arrayBuffer();
+    const headers = { 'Content-Type': 'application/gzip' };
+    // This is a raw fetch(), not the shared api() helper — needs the same
+    // local-control-token attachment api() does, since /api/playlists/import
+    // is admin-gated (see server.js's requireAdmin) and the Android host
+    // authenticates via this token instead of a password.
+    const localToken = localControlToken();
+    if (localToken) headers['X-Local-Control-Token'] = localToken;
     const res = await fetch(BASE + 'api/playlists/import', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/gzip' },
+      headers,
       body: buf,
     });
     let data = null;

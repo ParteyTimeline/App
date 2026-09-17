@@ -1,0 +1,4 @@
+Two fixes: switching to the game right after "start hosting" no longer
+briefly flashes a connection-error page while the server finishes
+starting up; and a Nearby peer no longer shows a pointless "connection
+lost, reconnecting…" when the host deliberately stops hosting.

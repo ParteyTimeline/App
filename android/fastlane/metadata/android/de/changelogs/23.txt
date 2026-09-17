@@ -1,0 +1,5 @@
+Zwei Korrekturen: Wer direkt nach "Hosting starten" ins Spiel wechselt,
+sieht nicht mehr kurz eine Verbindungsfehler-Seite, während der Server
+noch startet; und ein Nearby-Mitspieler zeigt nicht mehr sinnlos
+"Verbindung unterbrochen — verbinde neu…", wenn der Host das Hosting
+absichtlich beendet.

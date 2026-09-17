@@ -20,6 +20,8 @@
     <string name="lang_switch_content_description">Switch language</string>
     <string name="status_reconnecting">Connection lost — reconnecting…</string>
     <string name="status_reconnect_failed">Could not reconnect. Returning to the start screen…</string>
+    <string name="status_connecting_to_server">Starting up…</string>
+    <string name="status_initial_connect_failed">Could not connect. Returning to the start screen…</string>
     <string name="download_saved_downloads">saved to Downloads</string>
     <string name="download_saved_app_folder">saved (app folder, see a file manager)</string>
     <string name="download_failed">Download failed</string>

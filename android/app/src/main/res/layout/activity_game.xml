@@ -20,4 +20,31 @@
         android:visibility="gone"
         android:text="@string/status_reconnecting" />
 
+    <!-- Covers the WebView's own ugly built-in error page, which briefly
+         renders on every failed load attempt (e.g. the embedded server
+         not listening yet right after "start hosting") before
+         GameWebViewActivity's retry logic reloads — see its
+         WebViewClient. Visible from the very first load attempt, only
+         hidden once a page actually finishes loading successfully. -->
+    <LinearLayout
+        android:id="@+id/connectingOverlay"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:orientation="vertical"
+        android:gravity="center"
+        android:background="?android:attr/colorBackground">
+
+        <ProgressBar
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content" />
+
+        <TextView
+            android:id="@+id/tvConnectingStatus"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:text="@string/status_connecting_to_server" />
+
+    </LinearLayout>
+
 </FrameLayout>

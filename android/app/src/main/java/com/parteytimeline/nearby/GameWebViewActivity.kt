@@ -68,8 +68,22 @@ class GameWebViewActivity : AppCompatActivity() {
 
     private lateinit var webView: WebView
     private lateinit var tvReconnecting: TextView
+    private lateinit var connectingOverlay: View
+    private lateinit var tvConnectingStatus: TextView
     private var url: String = ""
     private var role: String = "host"
+
+    // Only covers the very FIRST load — public/app.js or a mid-game peer
+    // reconnect (see hookPeerReconnectEvents(), which has its own
+    // tvReconnecting banner for that) don't need this full-screen cover.
+    private var showingInitialConnect = true
+
+    // Set in onReceivedError(), read (and reset) in onPageFinished() — a
+    // failed main-frame load still fires onPageFinished for the WebView's
+    // own built-in error page, which would otherwise look like a genuine
+    // successful load and hide connectingOverlay right as it's covering
+    // that exact error page.
+    private var lastLoadHadError = false
 
     private var pendingFileChooserCallback: ValueCallback<Array<Uri>>? = null
     private var pendingDownload: PendingDownload? = null
@@ -106,6 +120,8 @@ class GameWebViewActivity : AppCompatActivity() {
 
         webView = findViewById(R.id.webView)
         tvReconnecting = findViewById(R.id.tvReconnecting)
+        connectingOverlay = findViewById(R.id.connectingOverlay)
+        tvConnectingStatus = findViewById(R.id.tvConnectingStatus)
         webView.settings.javaScriptEnabled = true
         webView.settings.domStorageEnabled = true
         webView.webViewClient = object : WebViewClient() {
@@ -113,9 +129,34 @@ class GameWebViewActivity : AppCompatActivity() {
                 // The embedded Node server (host) or the tunnel (peer) may
                 // still be starting up when the WebView first tries to load
                 // — retry a few times instead of showing a dead page.
-                if (!request.isForMainFrame || retriesLeft <= 0) return
+                if (!request.isForMainFrame) return
+                lastLoadHadError = true
+                if (retriesLeft <= 0) {
+                    // Give up the same way hookPeerReconnectEvents() already
+                    // does for a dropped mid-game reconnect: say so, then
+                    // return to the start screen — only for the initial
+                    // load, which has no other give-up path at all
+                    // otherwise (silently stuck on connectingOverlay).
+                    if (showingInitialConnect) {
+                        tvConnectingStatus.text = getString(R.string.status_initial_connect_failed)
+                        retryHandler.postDelayed({ if (!isFinishing) finish() }, GIVE_UP_DISMISS_DELAY_MS)
+                    }
+                    return
+                }
                 retriesLeft--
                 retryHandler.postDelayed({ view.loadUrl(url) }, RETRY_DELAY_MS)
+            }
+
+            override fun onPageFinished(view: WebView, finishedUrl: String) {
+                if (lastLoadHadError) {
+                    // This "finish" is the WebView's own built-in error page
+                    // for the load that just failed above, not real content
+                    // — a retry is already scheduled (or we've given up).
+                    lastLoadHadError = false
+                } else if (showingInitialConnect) {
+                    showingInitialConnect = false
+                    connectingOverlay.visibility = View.GONE
+                }
             }
         }
         webView.webChromeClient = object : WebChromeClient() {
@@ -158,7 +199,21 @@ class GameWebViewActivity : AppCompatActivity() {
         webView.addJavascriptInterface(object {
             @android.webkit.JavascriptInterface
             fun hostStopped() {
-                runOnUiThread { if (!isFinishing) finish() }
+                runOnUiThread {
+                    // This is the authoritative "the host ended it on
+                    // purpose" signal — but NearbyPeer's own Nearby-
+                    // Connections-level disconnect detection has no way to
+                    // tell a deliberate stop from a transient radio drop,
+                    // and fires independently of this WS message (there's
+                    // no ordering guarantee between the two). Without this,
+                    // it can start (or already have started) an automatic
+                    // reconnect against a host that's now gone, showing
+                    // "connection lost, reconnecting…" right on top of — or
+                    // instead of — this screen's own teardown. Stop it at
+                    // the source rather than race it.
+                    if (role == "guest") NearbyPeer.current?.disconnect()
+                    if (!isFinishing) finish()
+                }
             }
 
             // Lets the HOST's own playlist-management UI (public/app.js) skip

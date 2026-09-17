@@ -20,4 +20,6 @@
     <string name="lang_switch_content_description">Sprache wechseln</string>
     <string name="status_reconnecting">Verbindung unterbrochen — verbinde neu…</string>
     <string name="status_reconnect_failed">Neuverbindung fehlgeschlagen. Zurück zum Startbildschirm…</string>
+    <string name="status_connecting_to_server">Wird gestartet…</string>
+    <string name="status_initial_connect_failed">Verbindung fehlgeschlagen. Zurück zum Startbildschirm…</string>
 </resources>

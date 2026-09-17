@@ -1,0 +1,3 @@
+Fixes guests just seeing a raw connection drop instead of a proper
+"host stopped" message when the host ends hosting — the server now
+waits to confirm delivery before the host's app fully shuts down.

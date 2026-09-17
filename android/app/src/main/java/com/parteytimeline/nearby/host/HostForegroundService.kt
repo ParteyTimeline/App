@@ -22,7 +22,13 @@ const val HOST_PORT = 3000
 private const val NOTIFICATION_CHANNEL_ID = "partey_host"
 private const val NOTIFICATION_ID = 1
 private const val ACTION_STOP = "com.parteytimeline.nearby.host.STOP"
-private const val LOCAL_JOIN_DISABLE_TIMEOUT_MS = 1500L
+// Comfortably above the server's own worst case for the same call (up to
+// ~500ms, regardless of guest count — see /api/local/host-control in
+// server.js, which now waits for each socket's close confirmation, capped
+// per-socket, in parallel) plus loopback/IPC overhead. Still a bounded
+// timeout, not a hard guarantee: if it's ever hit, killProcess() below
+// proceeds anyway rather than risk hanging process teardown indefinitely.
+private const val LOCAL_JOIN_DISABLE_TIMEOUT_MS = 2500L
 
 /**
  * Keeps the embedded Node server and Nearby Connections advertising alive
@@ -100,14 +106,16 @@ class HostForegroundService : Service() {
     }
 
     override fun onDestroy() {
-        nearbyHost.stop()
-        // Give already-connected LAN/QR browser guests a chance to hear
-        // 'hostStopped' (see server.js) and land on a clean "waiting for
-        // host" screen instead of a raw connection error — bounded so a
-        // wedged/slow loopback call can't meaningfully delay the kill below
-        // (Nearby peers don't depend on this: nearbyHost.stop() already
-        // dropped them via stopAllEndpoints()).
+        // Order matters: this has to run BEFORE nearbyHost.stop() below, not
+        // after. A Nearby peer's WebSocket connection is tunneled over
+        // Nearby Connections (see HostTunnelServer) — tearing that transport
+        // down first (as an earlier version of this method did) kills the
+        // tunnel before server.js ever gets a chance to push 'hostStopped'
+        // through it, so a Nearby guest only ever saw a raw disconnect,
+        // never the graceful message. Bounded so a wedged/slow loopback call
+        // can't meaningfully delay the kill below.
         setLocalJoinEnabled(false, blocking = true)
+        nearbyHost.stop()
         if (stoppedViaNotification) HostIpcContract.send(applicationContext, HostIpcContract.ACTION_HOST_STOPPED)
         super.onDestroy()
         // The whole point of the :host process: a real kill, not just
@@ -128,7 +136,13 @@ class HostForegroundService : Service() {
     // only advertising/joining toggles) — no startup race to retry around.
     // `blocking`: the final active=false call (see onDestroy()) needs a
     // real chance to reach the server before Process.killProcess() below
-    // ends this process; every other call stays fire-and-forget.
+    // ends this process; every other call stays fire-and-forget. NOT an
+    // ironclad guarantee that every guest actually received 'hostStopped'
+    // — it's a bounded wait for the HTTP round-trip to this device's own
+    // server, which itself now waits (also bounded) for each socket's
+    // close confirmation before responding. If either bound is hit, this
+    // proceeds anyway; killProcess() doesn't wait forever for guests who
+    // may be unreachable for unrelated reasons.
     private fun setLocalJoinEnabled(active: Boolean, blocking: Boolean) {
         val token = ControlTokenProvider.token
         val thread = Thread({

@@ -1,0 +1,4 @@
+Behebt, dass Mitspieler beim Beenden des Hostings nur einen rohen
+Verbindungsabbruch statt einer richtigen "Host beendet"-Meldung sahen —
+der Server wartet die Zustellung jetzt ab, bevor die App komplett
+herunterfährt.

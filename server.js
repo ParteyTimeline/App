@@ -633,7 +633,7 @@ app.post('/api/rooms/:code/join', auth.requireAuth, (req, res) => {
 // toggling their own game on/off.
 let localJoinEnabled = true;
 
-app.post('/api/local/host-control', (req, res) => {
+app.post('/api/local/host-control', async (req, res) => {
   const token = process.env.LOCAL_CONTROL_TOKEN;
   if (!token || req.headers['x-local-control-token'] !== token) {
     return res.status(403).json({ error: 'Nicht erlaubt', code: 'forbidden' });
@@ -646,13 +646,26 @@ app.post('/api/local/host-control', (req, res) => {
   // closing it so the client lands on the same "waiting for the host"
   // screen already used between rounds, rather than its normal WS
   // auto-reconnect just resubscribing to the same, now-abandoned room.
+  //
+  // The Android side (HostForegroundService.onDestroy()) blocks on THIS
+  // response before killing its whole process outright — sock.send()
+  // returning doesn't by itself prove the message actually left the
+  // device (only that Node hand it to the OS), so wait for each socket's
+  // own 'close' confirmation (bounded per socket) before responding,
+  // rather than responding the instant the loop below finishes queuing
+  // sends. That turns "the handler function returned quickly" into an
+  // actual, if still best-effort, delivery signal.
   if (!localJoinEnabled) {
     const room = rooms.mostRecentRoom();
     if (room) {
-      for (const sock of Array.from(room.sockets)) {
-        if (sock.readyState === 1) sock.send(JSON.stringify({ type: 'hostStopped' }));
+      const closed = Array.from(room.sockets).map((sock) => new Promise((resolve) => {
+        if (sock.readyState !== 1) return resolve();
+        sock.send(JSON.stringify({ type: 'hostStopped' }));
+        const timer = setTimeout(resolve, 500);
+        sock.once('close', () => { clearTimeout(timer); resolve(); });
         sock.close();
-      }
+      }));
+      await Promise.all(closed);
     }
   }
   res.json({ active: localJoinEnabled });

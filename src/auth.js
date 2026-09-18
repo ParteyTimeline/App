@@ -3,8 +3,23 @@ const store = require('./store');
 
 const USERNAME_RE = /^[a-zA-Z0-9_-]{3,20}$/;
 
+// Usernames end up as plain-object keys all over the codebase (rooms.js's
+// playerSelections/pools, public/app.js's rendering) — USERNAME_RE alone
+// still allows names like "constructor" or "__proto__" through (they're
+// valid alphanumeric/underscore strings), and those aren't own properties
+// at all: `obj['constructor']` resolves to Object.prototype's own
+// constructor function instead of undefined, so the usual `sel || []`
+// fallback never triggers and later array-only calls throw. Block anyone
+// from ever claiming one of these names in the first place, rather than
+// hardening every dictionary access site individually.
+const RESERVED_USERNAMES = new Set([...Object.getOwnPropertyNames(Object.prototype), '__proto__']);
+
+function isReservedUsername(name) {
+  return RESERVED_USERNAMES.has(name);
+}
+
 function register(username, password) {
-  if (!USERNAME_RE.test(username || '')) {
+  if (!USERNAME_RE.test(username || '') || isReservedUsername(username)) {
     throw Object.assign(new Error('invalid_username'), { code: 'invalid_username' });
   }
   if (!password || password.length < 6) {
@@ -66,4 +81,4 @@ function requireAdmin(req, res, next) {
   next();
 }
 
-module.exports = { register, verify, requireAuth, verifyAdmin, requireAdmin, USERNAME_RE };
+module.exports = { register, verify, requireAuth, verifyAdmin, requireAdmin, USERNAME_RE, isReservedUsername };

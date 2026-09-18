@@ -51,15 +51,19 @@ sealed class DiscoveryEvent {
 // be tracked with — see NearbyPeer's class doc for why.
 sealed class PeerState {
     object Idle : PeerState()
-    data class Connecting(val endpointId: String) : PeerState()
-    data class Connected(val endpointId: String) : PeerState() // Nearby-level connected, tunnel handshake pending
+    // attempt carries the in-progress reconnect count (0 for a fresh,
+    // manually-triggered connect) through Nearby's async handshake so a
+    // failure partway through resumes counting instead of restarting at 1 —
+    // see currentAttempt()/scheduleReconnect().
+    data class Connecting(val endpointId: String, val attempt: Int = 0) : PeerState()
+    data class Connected(val endpointId: String, val attempt: Int = 0) : PeerState() // Nearby-level connected, tunnel handshake pending
     data class Active(val endpointId: String) : PeerState() // tunnel confirmed live
     data class Reconnecting(val attempt: Int) : PeerState()
     object GaveUp : PeerState()
 }
 
 sealed class PeerEvent {
-    data class AttemptConnect(val endpointId: String) : PeerEvent()
+    data class AttemptConnect(val endpointId: String, val attempt: Int = 0) : PeerEvent()
     data class NearbyConnectSucceeded(val endpointId: String) : PeerEvent()
     // A first-ever failed attempt (never connected before) doesn't retry —
     // see scheduleReconnect()'s callers, which decide whether this or
@@ -110,10 +114,10 @@ class NearbyPeer(context: Context, private val localDisplayName: String) {
     private val machine = StateMachine.create<PeerState, PeerEvent, Unit> {
         initialState(PeerState.Idle)
         state<PeerState.Idle> {
-            on<PeerEvent.AttemptConnect> { transitionTo(PeerState.Connecting(it.endpointId)) }
+            on<PeerEvent.AttemptConnect> { transitionTo(PeerState.Connecting(it.endpointId, it.attempt)) }
         }
         state<PeerState.Connecting> {
-            on<PeerEvent.NearbyConnectSucceeded> { transitionTo(PeerState.Connected(it.endpointId)) }
+            on<PeerEvent.NearbyConnectSucceeded> { transitionTo(PeerState.Connected(it.endpointId, attempt)) }
             on<PeerEvent.BackToIdle> { transitionTo(PeerState.Idle) }
             on<PeerEvent.EnterReconnecting> { transitionTo(PeerState.Reconnecting(it.attempt)) }
             on<PeerEvent.ManualDisconnect> { transitionTo(PeerState.Idle) }
@@ -128,15 +132,30 @@ class NearbyPeer(context: Context, private val localDisplayName: String) {
             on<PeerEvent.ManualDisconnect> { transitionTo(PeerState.Idle) }
         }
         state<PeerState.Reconnecting> {
-            on<PeerEvent.AttemptConnect> { transitionTo(PeerState.Connecting(it.endpointId)) }
+            on<PeerEvent.AttemptConnect> { transitionTo(PeerState.Connecting(it.endpointId, it.attempt)) }
             on<PeerEvent.EnterReconnecting> { transitionTo(PeerState.Reconnecting(it.attempt)) }
             on<PeerEvent.GiveUp> { transitionTo(PeerState.GaveUp) }
             on<PeerEvent.ManualDisconnect> { transitionTo(PeerState.Idle) }
         }
         state<PeerState.GaveUp> {
-            on<PeerEvent.AttemptConnect> { transitionTo(PeerState.Connecting(it.endpointId)) }
+            on<PeerEvent.AttemptConnect> { transitionTo(PeerState.Connecting(it.endpointId, it.attempt)) }
             on<PeerEvent.ManualDisconnect> { transitionTo(PeerState.Idle) }
         }
+    }
+
+    // Single source of truth for "how many reconnect attempts so far",
+    // read from whichever state currently carries it — Connecting/Connected
+    // preserve the count through Nearby's async handshake instead of
+    // losing it the moment a retry leaves Reconnecting (the P1 this
+    // replaces: scheduleReconnect() used to read the count ONLY from
+    // PeerState.Reconnecting, so every attempt after the first reported 1
+    // and the 20-attempt cap/give-up never triggered). Active carries none
+    // because a live tunnel deliberately resets the count to 0.
+    private fun currentAttempt(): Int = when (val s = machine.state) {
+        is PeerState.Connecting -> s.attempt
+        is PeerState.Connected -> s.attempt
+        is PeerState.Reconnecting -> s.attempt
+        else -> 0
     }
 
     // Lets MainActivity tell a genuinely idle peer (discovery stopped,
@@ -179,9 +198,17 @@ class NearbyPeer(context: Context, private val localDisplayName: String) {
         discoveryMachine.transition(DiscoveryEvent.Stop)
     }
 
-    fun connectTo(endpointId: String) {
-        if (machine.state is PeerState.Connecting) return
-        machine.transition(PeerEvent.AttemptConnect(endpointId))
+    fun connectTo(endpointId: String, attempt: Int = 0) {
+        // Only Idle/Reconnecting/GaveUp actually handle AttemptConnect (see
+        // the transition table above) — mirror that here so a tap while
+        // already Connecting/Connected/Active is dropped instead of firing
+        // a second, overlapping requestConnection() that the old bare
+        // `is PeerState.Connecting` guard let through for those two states.
+        when (machine.state) {
+            is PeerState.Idle, is PeerState.Reconnecting, is PeerState.GaveUp -> {}
+            else -> return
+        }
+        machine.transition(PeerEvent.AttemptConnect(endpointId, attempt))
         onConnecting?.invoke(endpointId)
         // NON_DISRUPTIVE just avoids changing Wi-Fi/Bluetooth state for a
         // bandwidth upgrade we don't need — harmless to keep, but NOT what
@@ -201,10 +228,14 @@ class NearbyPeer(context: Context, private val localDisplayName: String) {
 
     /** Explicit, deliberate teardown (e.g. the activity is going away) — no automatic reconnect follows this. */
     fun disconnect() {
-        // Captured before transitioning: only meaningful while Nearby-level
-        // connected (Connected/Active), matching what today's disconnect
-        // actually tears down — not a merely in-flight Connecting attempt.
-        val connectedId = when (val s = machine.state) {
+        // Captured before transitioning — includes a merely in-flight
+        // Connecting attempt (not just Connected/Active) so a cancel while
+        // a requestConnection() is still pending actually tells Nearby to
+        // drop it too, instead of leaving it dangling at the SDK level
+        // while our own state machine moves on (the late-success side of
+        // that gap is closed separately in onConnectionResult/onPayloadReceived below).
+        val pendingId = when (val s = machine.state) {
+            is PeerState.Connecting -> s.endpointId
             is PeerState.Connected -> s.endpointId
             is PeerState.Active -> s.endpointId
             else -> null
@@ -213,7 +244,7 @@ class NearbyPeer(context: Context, private val localDisplayName: String) {
         handler.removeCallbacksAndMessages(null)
         lastEndpointId = null
         lastEndpointName = null
-        connectedId?.let { client.disconnectFromEndpoint(it) }
+        pendingId?.let { client.disconnectFromEndpoint(it) }
         teardownTunnel()
         stopDiscovery()
         if (current === this) current = null
@@ -244,6 +275,18 @@ class NearbyPeer(context: Context, private val localDisplayName: String) {
                 if (lastEndpointId != null) scheduleReconnect() else machine.transition(PeerEvent.BackToIdle)
                 return
             }
+            // A disconnect()/newer connectTo() can move us away from
+            // Connecting(endpointId) before this async callback arrives
+            // (cancel-then-late-success). Only accept the success if we're
+            // still actually waiting on THIS endpoint — otherwise reject
+            // and tell Nearby to drop it too, rather than building a tunnel
+            // for a connection nothing tracks anymore.
+            val connecting = machine.state as? PeerState.Connecting
+            if (connecting == null || connecting.endpointId != endpointId) {
+                Log.w(TAG, "Ignoring stale onConnectionResult success for $endpointId (state=${machine.state})")
+                client.disconnectFromEndpoint(endpointId)
+                return
+            }
             machine.transition(PeerEvent.NearbyConnectSucceeded(endpointId))
             lastEndpointId = endpointId
             lastEndpointName = visibleEndpoints[endpointId] ?: lastEndpointName
@@ -255,7 +298,8 @@ class NearbyPeer(context: Context, private val localDisplayName: String) {
             // waiting on the host's payload (no tunnel yet) after this
             // window, treat the link as dead ourselves.
             handler.postDelayed({
-                if (machine.state == PeerState.Connected(endpointId)) {
+                val current = machine.state
+                if (current is PeerState.Connected && current.endpointId == endpointId) {
                     Log.w(TAG, "No payload received from host within watchdog window for $endpointId — treating link as stalled")
                     client.disconnectFromEndpoint(endpointId)
                 }
@@ -275,7 +319,7 @@ class NearbyPeer(context: Context, private val localDisplayName: String) {
     }
 
     private fun scheduleReconnect() {
-        val current = (machine.state as? PeerState.Reconnecting)?.attempt ?: 0
+        val current = currentAttempt()
         if (current >= MAX_RECONNECT_ATTEMPTS) {
             machine.transition(PeerEvent.GiveUp)
             onReconnectGaveUp?.invoke()
@@ -290,11 +334,11 @@ class NearbyPeer(context: Context, private val localDisplayName: String) {
     }
 
     private fun attemptReconnect() {
-        if (machine.state !is PeerState.Reconnecting) return
+        val attempt = (machine.state as? PeerState.Reconnecting)?.attempt ?: return
         val targetId = lastEndpointId?.takeIf { visibleEndpoints.containsKey(it) }
             ?: lastEndpointName?.let { name -> visibleEndpoints.entries.firstOrNull { it.value == name }?.key }
         if (targetId != null) {
-            connectTo(targetId)
+            connectTo(targetId, attempt)
         } else {
             scheduleReconnect()
         }
@@ -329,6 +373,15 @@ class NearbyPeer(context: Context, private val localDisplayName: String) {
         override fun onPayloadReceived(endpointId: String, payload: Payload) {
             Log.d(TAG, "onPayloadReceived($endpointId, type=${payload.type})")
             if (payload.type != Payload.Type.STREAM) return
+            // Same late-arrival guard as onConnectionResult above: a stream
+            // payload for an endpoint we've since disconnected/moved past
+            // (state no longer Connected(endpointId)) must not start a
+            // tunnel nobody is tracking.
+            val connected = machine.state as? PeerState.Connected
+            if (connected == null || connected.endpointId != endpointId) {
+                Log.w(TAG, "Ignoring stream payload from $endpointId while state=${machine.state}")
+                return
+            }
             val output = outgoingOutput
             if (output == null) {
                 Log.w(TAG, "onPayloadReceived($endpointId): no outgoing stream yet, dropping")

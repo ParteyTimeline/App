@@ -22,7 +22,17 @@ function detectSource(url) {
   const u = String(url || '');
   if (/open\.spotify\.com/i.test(u)) return 'spotify';
   if (/youtube\.com|youtu\.be/i.test(u)) return 'youtube';
-  if (/deezer\.com|dzcdn|^\d+$/i.test(u.trim())) return 'deezer';
+  if (/^\d+$/.test(u.trim())) return 'deezer';
+  // A plain substring search for "deezer.com"/"dzcdn" anywhere in the
+  // string let a non-Deezer URL still get classified (and later fetched by
+  // deezer.resolveToPlaylistId) just by carrying that text in, say, a query
+  // string (e.g. https://internal-host/x?source=deezer.com) — check the
+  // actual host instead.
+  try {
+    const parsed = new URL(/^https?:\/\//i.test(u.trim()) ? u.trim() : 'https://' + u.trim());
+    const h = parsed.hostname.toLowerCase();
+    if (h === 'deezer.com' || h.endsWith('.deezer.com') || h === 'dzcdn.net' || h.endsWith('.dzcdn.net')) return 'deezer';
+  } catch (e) { /* not a URL at all */ }
   return null;
 }
 
@@ -34,6 +44,47 @@ function detectPasteKind(text) {
   const ids = spotify.extractTrackIdsFromText(text);
   if (ids.length > 1) return 'spotify-tracklist';
   return null;
+}
+
+// Express 4 (unlike 5) never forwards a rejected promise from an async
+// route handler to error-handling middleware, and Node has treated an
+// unhandled promise rejection as fatal (crashes the whole process) since
+// v15 — so any uncaught throw/rejection inside an `async (req, res) => {}`
+// handler here takes down every room on the server, not just that one
+// request. Wrap every async handler with this so it always resolves to an
+// ordinary HTTP response instead.
+function asyncHandler(fn) {
+  return (req, res, next) => {
+    Promise.resolve(fn(req, res, next)).catch((e) => {
+      console.error(`Unhandled error in ${req.method} ${req.path}:`, e);
+      if (!res.headersSent) res.status(500).json({ error: 'Interner Fehler', code: 'internal_error' });
+    });
+  };
+}
+
+function isSafeHttpUrl(value) {
+  if (typeof value !== 'string') return false;
+  try {
+    const u = new URL(value);
+    return u.protocol === 'http:' || u.protocol === 'https:';
+  } catch (e) {
+    return false;
+  }
+}
+
+// Gates what a re-imported .tar.gz playlist archive (see
+// /api/playlists/import below) is allowed to add to the shared library —
+// this data comes from a file an admin was handed, not from this server's
+// own trusted import pipeline (Deezer/Spotify/YouTube), so its shape can't
+// be assumed.
+function isValidImportedTrack(t) {
+  if (!t || typeof t !== 'object' || Array.isArray(t)) return false;
+  if (typeof t.id !== 'string' && typeof t.id !== 'number') return false;
+  if (typeof t.t !== 'string' || !t.t.trim()) return false;
+  if (typeof t.a !== 'string' || !t.a.trim()) return false;
+  if (!Number.isInteger(t.y) || t.y < 1900 || t.y > new Date().getFullYear() + 1) return false;
+  if (t.cover != null && !isSafeHttpUrl(t.cover)) return false;
+  return true;
 }
 
 const PORT = process.env.PORT || 3000;
@@ -209,9 +260,9 @@ async function runImport(playlistId, { source, url, pasteKind, pasteText }) {
   }
 }
 
-app.post('/api/playlists', auth.requireAuth, async (req, res) => {
+app.post('/api/playlists', auth.requireAuth, asyncHandler(async (req, res) => {
   const { url, name } = req.body || {};
-  if (!url || !url.trim()) {
+  if (typeof url !== 'string' || !url.trim()) {
     return res.status(400).json({ error: 'Playlist-Link oder eingefügte Liste fehlt', code: 'missing_playlist_url' });
   }
 
@@ -276,7 +327,7 @@ app.post('/api/playlists', auth.requireAuth, async (req, res) => {
 
   importsInFlight.add(sourceKey);
   runImport(playlist.id, { source, url, pasteKind, pasteText: url }).finally(() => importsInFlight.delete(sourceKey));
-});
+}));
 
 // Downloads every track's preview audio to data/audio-cache/ up front, so a
 // round can be played later with zero internet access (offline Nearby-Play,
@@ -373,7 +424,7 @@ app.post('/api/playlists/:id/prefetch', auth.requireAuth, (req, res) => {
 // YouTube clips are streamed on demand; Deezer tracks use fresh signed previews.
 // A locally cached copy (see /prefetch above) always wins, since it needs no
 // network at all and works after the original signed URL has expired.
-app.get('/api/track/:id/preview', auth.requireAuth, async (req, res) => {
+app.get('/api/track/:id/preview', auth.requireAuth, asyncHandler(async (req, res) => {
   if (audioCache.isCached(req.params.id)) {
     return audioCache.serveCached(req.params.id, req, res);
   }
@@ -390,7 +441,7 @@ app.get('/api/track/:id/preview', auth.requireAuth, async (req, res) => {
   } catch (e) {
     res.status(404).send('Keine Vorschau verfügbar');
   }
-});
+}));
 
 function findTrackCoverUrl(id) {
   for (const p of store.listPlaylists()) {
@@ -480,6 +531,18 @@ app.post('/api/playlists/import', auth.requireAuth, auth.requireAdmin, express.r
   }
   if (!Array.isArray(meta.tracks) || meta.tracks.length === 0) {
     return res.status(400).json({ error: 'Keine Songs im Archiv', code: 'empty_playlist' });
+  }
+  // Only checking "is a nonempty array" let a single malformed entry (e.g.
+  // `null`, or a legitimate-looking track carrying HTML in `y`) reach
+  // store.addPlaylist() below before anything downstream (the per-track
+  // loop right after, or later cache-restore/render code) ever looked at
+  // its shape — leaving a corrupt, half-imported playlist behind that
+  // couldn't even be deleted afterwards, and (for the HTML case) a stored
+  // XSS payload rendered verbatim wherever that year is shown. Validate
+  // every track fully before persisting anything, so a bad archive is
+  // rejected outright instead of partially imported.
+  if (!meta.tracks.every(isValidImportedTrack)) {
+    return res.status(400).json({ error: 'Song-Daten im Archiv sind ungültig', code: 'invalid_track_data' });
   }
 
   const playlist = {
@@ -631,9 +694,17 @@ app.post('/api/rooms/:code/join', auth.requireAuth, (req, res) => {
 // and this must be unreachable by anyone but the app itself — a browser on
 // the same Wi-Fi or a Nearby peer could otherwise grief the host by
 // toggling their own game on/off.
-let localJoinEnabled = true;
+//
+// Passwordless join is only meant to exist on the Android app's own
+// embedded server, identified by LOCAL_CONTROL_TOKEN being set (see
+// NodeRuntime.kt, which is the only place that ever sets it) — an
+// ordinary `npm start`/Docker deployment never sets it, so defaulting
+// this to `true` unconditionally let anyone reach /api/local/join on a
+// normal deployment too and claim a session under any name, including an
+// existing registered account's, with no password at all.
+let localJoinEnabled = !!process.env.LOCAL_CONTROL_TOKEN;
 
-app.post('/api/local/host-control', async (req, res) => {
+app.post('/api/local/host-control', asyncHandler(async (req, res) => {
   const token = process.env.LOCAL_CONTROL_TOKEN;
   if (!token || req.headers['x-local-control-token'] !== token) {
     return res.status(403).json({ error: 'Nicht erlaubt', code: 'forbidden' });
@@ -669,7 +740,7 @@ app.post('/api/local/host-control', async (req, res) => {
     }
   }
   res.json({ active: localJoinEnabled });
-});
+}));
 
 app.post('/api/local/join', (req, res) => {
   if (!localJoinEnabled) {
@@ -678,7 +749,14 @@ app.post('/api/local/join', (req, res) => {
   const room = rooms.mostRecentRoom();
 
   if (req.session.user) {
-    if (!room) return res.json({ username: req.session.user, code: null });
+    // A finished game still lists this player as a team member, so without
+    // this check "already a member" was true and the room.phase==='lobby'
+    // gate a few lines down (which only runs for a NOT-already-member)
+    // never got a chance to reject it — a guest who deliberately left a
+    // just-ended game (see public/app.js's leaveRoom()) got immediately
+    // reconnected to that same finished room by their own poll loop
+    // instead of waiting for a genuinely new one.
+    if (!room || room.phase === 'gameover') return res.json({ username: req.session.user, code: null });
     const already = room.teams.some((t) => t.members.includes(req.session.user));
     if (!already) {
       if (room.phase !== 'lobby') {
@@ -692,6 +770,22 @@ app.post('/api/local/join', (req, res) => {
 
   const name = String((req.body || {}).name || '').trim().slice(0, 20);
   if (!name) return res.status(400).json({ error: 'Name fehlt', code: 'name_required' });
+  // See auth.isReservedUsername for why — unlike registered accounts,
+  // local/no-account names never went through USERNAME_RE at all, so this
+  // is the only thing stopping a guest here from picking "constructor" and
+  // breaking every plain-object lookup keyed by username.
+  if (auth.isReservedUsername(name)) {
+    return res.status(400).json({ error: 'Name ist nicht erlaubt', code: 'name_not_allowed' });
+  }
+  // Only checking against the current room's members (below) let a guest
+  // claim an existing REGISTERED account's name outright whenever no room
+  // had been created yet — that session would then carry that account's
+  // real privileges (room ownership, playlist library access) with no
+  // password. Reject any registered username outright; only truly unclaimed
+  // names get the passwordless guest treatment.
+  if (store.getUser(name)) {
+    return res.status(400).json({ error: 'Name ist schon vergeben', code: 'name_taken' });
+  }
 
   if (room) {
     if (room.teams.some((t) => t.members.includes(name))) {

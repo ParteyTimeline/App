@@ -1014,8 +1014,15 @@ function renderRoom() {
 }
 
 function memberSongCount(s, username) {
-  const sel = s.playerSelections[username] || [];
-  return sel.reduce((sum, p) => sum + p.count, 0);
+  // The server now blocks reserved names like "constructor" from ever
+  // being claimed (see auth.isReservedUsername), but a plain `obj[username]`
+  // lookup on a name that happens to match an Object.prototype property
+  // resolves to THAT inherited value (e.g. a function) instead of
+  // undefined, silently skipping the `|| []` fallback — guard explicitly
+  // rather than relying only on the server-side name check holding for
+  // every possible source of `username` here.
+  const sel = Object.prototype.hasOwnProperty.call(s.playerSelections, username) ? s.playerSelections[username] : [];
+  return Array.isArray(sel) ? sel.reduce((sum, p) => sum + p.count, 0) : 0;
 }
 
 function renderRoomLobby(s) {
@@ -1210,7 +1217,7 @@ function renderGamePlay(s) {
             ${renderCover(c.id, c.t, c.a, c.y, '')}
             <div class="ttl">${esc(c.t)}</div>
             <div class="art">${esc(c.a)}</div>
-            <div class="yr tab">${c.y}</div>
+            <div class="yr tab">${esc(c.y)}</div>
           ` : ''}
         </div>
       </div></div>
@@ -1303,7 +1310,7 @@ function renderRail(team, interactive, selectedGap, action, lockedGap) {
     }
     if (g < tl.length) {
       const c = tl[g];
-      html += `<div class="chip">${renderCover(c.id, c.t, c.a, c.y, '')}<div class="ct">${esc(c.t)}</div><div class="cy tab">${c.y}</div></div>`;
+      html += `<div class="chip">${renderCover(c.id, c.t, c.a, c.y, '')}<div class="ct">${esc(c.t)}</div><div class="cy tab">${esc(c.y)}</div></div>`;
     }
   }
   return html;

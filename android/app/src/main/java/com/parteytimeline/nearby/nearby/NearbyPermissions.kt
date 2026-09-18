@@ -34,7 +34,13 @@ object NearbyPermissions {
             // comments). Requesting both covers host and peer roles alike.
             Manifest.permission.ACCESS_COARSE_LOCATION,
             Manifest.permission.ACCESS_FINE_LOCATION,
-            Manifest.permission.POST_NOTIFICATIONS, // needed to show the host's foreground-service notification
+            // POST_NOTIFICATIONS is deliberately NOT here — see
+            // notificationPermissionIfNeeded() below. Nearby transport
+            // itself needs none of the permissions above to actually work,
+            // so requiring notifications too (and blocking hasAll() on it)
+            // made denying just that one permission prevent hosting AND
+            // joining outright, even though a foreground service can start
+            // fine without it (the notification just won't be visible).
         )
         // NEARBY_WIFI_DEVICES doesn't exist until API 33 (Android 13) — API
         // 32 (Android 12L) is a real, shipped OS version that predates it,
@@ -69,5 +75,18 @@ object NearbyPermissions {
 
     fun hasAll(context: Context): Boolean = required().all {
         ContextCompat.checkSelfPermission(context, it) == PackageManager.PERMISSION_GRANTED
+    }
+
+    // Separate from required()/hasAll() on purpose: this is a nice-to-have
+    // (the host's foreground-service notification being visible), not
+    // something hosting/joining should ever be blocked on. Returns the
+    // permission to request only when it's actually still worth asking for
+    // (API 33+ and not already granted) — null otherwise, so callers can
+    // just do `notificationPermissionIfNeeded(context)?.let { launcher.launch(it) }`
+    // with no extra version/grant checks of their own.
+    fun notificationPermissionIfNeeded(context: Context): String? {
+        if (Build.VERSION.SDK_INT < 33) return null
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) return null
+        return Manifest.permission.POST_NOTIFICATIONS
     }
 }

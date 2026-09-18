@@ -74,3 +74,23 @@ test('shuffling drops empty teams the same way as the unshuffled path', () => {
   assert.equal(room.teams.length, 2);
   assert.deepEqual(new Set(room.teams.map((t) => t.id)), new Set(['t0', 't1']));
 });
+
+test('a rejected start (need_more_teams) leaves empty teams in place instead of deleting them', () => {
+  // teamCount: 4 but only the host joined -> only 1 non-empty team, so
+  // startGame() must throw before doing anything else. It used to filter
+  // room.teams down to the non-empty ones FIRST and only check the count
+  // after, permanently losing the 3 empty (but still joinable) teams even
+  // though the start itself never went through.
+  const room = rooms.createRoom({ hostUsername: 'p0', teamCount: 4 });
+  rooms.setPlayerPlaylists(room, 'p0', [{ id: 'pl-p0', name: 'p0', tracks: [trackFor('p0')] }]);
+  assert.throws(() => rooms.startGame(room, 'p0'), { code: 'need_more_teams' });
+  assert.equal(room.teams.length, 4);
+  assert.equal(room.phase, 'lobby');
+
+  // A second player can still join one of the teams that would have been
+  // deleted, and starting now succeeds.
+  rooms.addPlayer(room, 'p1');
+  rooms.setPlayerPlaylists(room, 'p1', [{ id: 'pl-p1', name: 'p1', tracks: [trackFor('p1')] }]);
+  rooms.startGame(room, 'p0');
+  assert.equal(room.phase, 'ready');
+});

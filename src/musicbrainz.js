@@ -50,7 +50,16 @@ async function getEarliestReleaseYear(artist, title, attempt = 0) {
     }
     if (!res.ok) return null;
     const json = await res.json();
+    // MusicBrainz's `query=` endpoint is a scored full-text search, not an
+    // exact-match filter — it can and does return recordings that only
+    // loosely match (same words in a different order, a totally different
+    // song by an artist with a similar name, ...) alongside the real hit.
+    // Taking every returned year's minimum without checking identity first
+    // let an unrelated but earlier-dated recording override the real
+    // song's date — see isConfidentMatch (shared with findRecording below,
+    // which already did this check).
     const years = (json.recordings || [])
+      .filter((r) => isConfidentMatch(r, artist, title))
       .map((r) => extractYear(r['first-release-date']))
       .filter((y) => y && y > 1900 && y <= new Date().getFullYear());
     if (years.length === 0) return null;
@@ -104,6 +113,18 @@ function normalized(value) {
 
 // A high search score alone is not proof of identity: also check title and
 // artist, and reject ambiguous title-only matches from different artists.
+// Shared by findRecording (below) and getEarliestReleaseYear (above) — both
+// take recordings from the same fuzzy full-text search endpoint, so both
+// need the same identity check before trusting a hit's data at all.
+function isConfidentMatch(r, artist, title) {
+  const credits = r['artist-credit'] || [];
+  const fullArtist = credits.map((c) => (c.name || c.artist?.name || '') + (c.joinphrase || '')).join('');
+  return Number(r.score) >= 90 && normalized(r.title) === normalized(title) &&
+    credits.length > 0 &&
+    (!artist || normalized(fullArtist) === normalized(artist) ||
+      credits.some((c) => normalized(c.name || c.artist?.name) === normalized(artist)));
+}
+
 async function findRecording(artist, title, attempt = 0) {
   const query = `recording:"${escapeLucene(title)}"` +
     (artist ? ` AND artist:"${escapeLucene(artist)}"` : '');
@@ -119,13 +140,8 @@ async function findRecording(artist, title, attempt = 0) {
   if (!res.ok) throw new Error('MusicBrainz antwortete mit Status ' + res.status);
   const json = await res.json();
   const matches = (json.recordings || []).filter((r) => {
-    const credits = r['artist-credit'] || [];
-    const fullArtist = credits.map((c) => (c.name || c.artist?.name || '') + (c.joinphrase || '')).join('');
     const year = extractYear(r['first-release-date']);
-    return Number(r.score) >= 90 && normalized(r.title) === normalized(title) &&
-      credits.length && year > 1900 && year <= new Date().getFullYear() &&
-      (!artist || normalized(fullArtist) === normalized(artist) ||
-        credits.some((c) => normalized(c.name || c.artist?.name) === normalized(artist)));
+    return isConfidentMatch(r, artist, title) && year > 1900 && year <= new Date().getFullYear();
   });
   if (!artist && new Set(matches.map((r) =>
     (r['artist-credit'] || []).map((c) => c.artist?.id || normalized(c.name)).join(','))).size > 1) return null;

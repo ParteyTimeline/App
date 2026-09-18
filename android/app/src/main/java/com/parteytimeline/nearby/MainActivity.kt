@@ -96,6 +96,13 @@ class MainActivity : AppCompatActivity() {
             pendingAction = null
         }
 
+    // Separate from permissionLauncher above on purpose — see
+    // NearbyPermissions.notificationPermissionIfNeeded(): denying this one
+    // must never block hosting/joining, so its result is intentionally
+    // ignored either way, not fed into pendingAction/withPermissions.
+    private val notificationPermissionLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
+
     // HostForegroundService now runs in a separate :host process (see
     // AndroidManifest.xml) — it can no longer hand this activity a same-
     // process callback closure, so these events cross as real broadcasts
@@ -163,12 +170,17 @@ class MainActivity : AppCompatActivity() {
     // connecting text was on it from BEFORE the game ever started — stale
     // and confusing ("Verbinde… <host>" for a host that's long gone), since
     // nothing else ever updates these views once the game screen takes
-    // over. Only reset when genuinely idle: not hosting, and nearbyPeer
-    // isn't legitimately mid-discovery/connection — a background+foreground
-    // cycle during either of those must NOT wipe it.
+    // over. Only reset a screen that's stuck showing Discovering/
+    // ConnectingToHost with nothing actually driving it anymore — a
+    // background+foreground cycle during a legitimately active
+    // discovery/connection must NOT wipe it, and Idle is left alone
+    // entirely so an already-idle screen (e.g. one showing
+    // status_permissions_required after a denied permission request,
+    // which never leaves Idle) doesn't have that message erased by the
+    // mere act of resuming.
     override fun onResume() {
         super.onResume()
-        if (machine.state !is ScreenState.Hosting && nearbyPeer?.isActive != true) {
+        if (machine.state !is ScreenState.Hosting && machine.state !is ScreenState.Idle && nearbyPeer?.isActive != true) {
             machine.transition(ScreenEvent.BackToIdle)
             tvStatus.text = ""
             discoveredHosts.clear()
@@ -214,6 +226,11 @@ class MainActivity : AppCompatActivity() {
         nearbyPeer?.disconnect()
         nearbyPeer = null
         machine.transition(ScreenEvent.StartHosting)
+
+        // Best-effort only — see NearbyPermissions.notificationPermissionIfNeeded():
+        // hosting starts below regardless of whether this is granted, denied,
+        // or never resolved at all.
+        NearbyPermissions.notificationPermissionIfNeeded(this)?.let { notificationPermissionLauncher.launch(it) }
 
         val intent = Intent(this, HostForegroundService::class.java)
         ContextCompat.startForegroundService(this, intent)

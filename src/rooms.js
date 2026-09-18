@@ -63,7 +63,28 @@ function fuzzyMatch(guess, actual) {
   const g = normalizeGuess(guess);
   const a = normalizeGuess(actual);
   if (!g || !a) return false;
-  if (g === a || a.includes(g) || g.includes(a)) return true;
+  // Exact match first and unconditionally — real song/artist names as
+  // short as one or two characters exist (e.g. "M", "U2"), and those must
+  // keep matching regardless of any length floor applied below; that floor
+  // only ever gates the FUZZIER containment check right after, never this.
+  if (g === a) return true;
+  // Unrestricted containment accepted ANY shared substring, including a
+  // single shared letter — "a" is trivially contained in almost every
+  // artist/title, so a one-character guess auto-matched. Require the
+  // shorter side to be a real fragment (a handful of characters) before
+  // trusting containment as a genuine partial answer — no ratio against
+  // the longer side's length, so a legitimate one-word partial guess like
+  // "Rhapsody" for "Bohemian Rhapsody" still works.
+  const shorter = g.length <= a.length ? g : a;
+  const longer = g.length <= a.length ? a : g;
+  if (shorter.length >= 3 && longer.includes(shorter)) return true;
+  // Below 3 characters, a Levenshtein distance of 1 (the floor from
+  // Math.max(1, ...) just below) is almost meaningless — any 1-character
+  // answer is distance-1 from EVERY other character, and most 2-character
+  // answers are distance-1 from a large fraction of other 2-character
+  // strings. Real that-short answers already matched above via exact
+  // equality; below this length, only exact equality counts as correct.
+  if (a.length <= 2) return false;
   const dist = levenshtein(g, a);
   return dist <= Math.max(1, Math.floor(a.length * 0.25));
 }
@@ -260,14 +281,17 @@ function startGame(room, username) {
   if (room.hostUsername !== username) throw err('not_host');
   if (room.phase !== 'lobby') throw err('bad_phase');
   // Empty teams never get a turn — drop them for this game rather than
-  // stalling on a team nobody joined.
-  room.teams = room.teams.filter((t) => t.members.length > 0);
-  if (room.teams.length < 2) throw err('need_more_teams');
+  // stalling on a team nobody joined. Computed into a local candidate
+  // first: a rejected start (need_more_teams below) must leave the lobby
+  // exactly as it was, not permanently delete teams that were only empty
+  // because nobody had joined them YET.
+  const candidateTeams = room.teams.filter((t) => t.members.length > 0);
+  if (candidateTeams.length < 2) throw err('need_more_teams');
   // Randomize turn order once, here — not on every reshuffle/redraw — so it
   // stays fixed for the rest of this game. Team identity (name/color) stays
   // with each team object; only the array position (i.e. turnIndex order)
   // changes.
-  if (room.shuffleTeamOrder) room.teams = shuffle(room.teams);
+  room.teams = room.shuffleTeamOrder ? shuffle(candidateTeams) : candidateTeams;
 
   // Build per-player pools, but first dedupe by track id ACROSS THE WHOLE
   // ROOM: two people might have the same song in their own playlists (very
@@ -749,6 +773,7 @@ module.exports = {
   next,
   publicState,
   broadcast,
+  fuzzyMatch,
   MIN_TEAMS,
   MAX_TEAMS,
 };

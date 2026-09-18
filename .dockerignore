@@ -6,5 +6,18 @@ data
 .env
 deploy/apply-zimbra-nginx.sh
 
+# The server image never needs the Android app at all — excluding it also
+# keeps its local, never-committed signing material (release.jks,
+# signing.properties, the passwords file) out of any local `docker compose
+# build`'s context. .gitignore keeps those files out of Git, but Docker
+# reads its own .dockerignore, not Git's — COPY . . would otherwise happily
+# include them in the build context (and, from there, the built image).
+android
+# Defense in depth in case signing material ever ends up somewhere else.
+*.jks
+*.keystore
+signing.properties
+PASSWORDS_DO_NOT_COMMIT.txt
+
 __pycache__/
 *.pyc

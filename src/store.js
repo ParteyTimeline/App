@@ -8,6 +8,31 @@ function ensureDataDir() {
   if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 }
 
+// A playlist import/prefetch job (see server.js's runImport/runPrefetch)
+// only lives as an in-memory Promise plus a Set entry (importsInFlight/
+// prefetchInFlight) — a process restart mid-job loses both, but the
+// persisted 'importing'/'caching' status survives in store.json. Without
+// this, a restarted server left that row stuck forever: the UI kept
+// polling a job nothing is running anymore, and re-submitting the same
+// source was permanently rejected as "already_in_library" (only a
+// 'failed' status is ever allowed to retry — see /api/playlists' existing
+// check). Reconcile any such abandoned job to 'failed' right on load so
+// it's both visible as broken and retryable.
+function reconcileAbandonedJobs(data) {
+  for (const p of Object.values(data.playlists || {})) {
+    if (p.status === 'importing') {
+      p.status = 'failed';
+      p.error = 'Import wurde durch einen Serverneustart unterbrochen';
+      p.errorCode = 'import_interrupted';
+    }
+    if (p.cacheStatus === 'caching') {
+      p.cacheStatus = 'failed';
+      p.cacheNote = 'Download wurde durch einen Serverneustart unterbrochen';
+    }
+  }
+  return data;
+}
+
 function loadStore() {
   ensureDataDir();
   if (!fs.existsSync(STORE_FILE)) {
@@ -17,7 +42,7 @@ function loadStore() {
   }
   const raw = fs.readFileSync(STORE_FILE, 'utf8');
   try {
-    return JSON.parse(raw);
+    return reconcileAbandonedJobs(JSON.parse(raw));
   } catch (e) {
     throw new Error('data/store.json ist beschädigt: ' + e.message);
   }

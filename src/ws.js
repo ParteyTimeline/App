@@ -3,7 +3,10 @@ const rooms = require('./rooms');
 const store = require('./store');
 
 function attachWebSocket(server, sessionParser) {
-  const wss = new WebSocketServer({ noServer: true });
+  // Every message here is small JSON (game moves, playlist-id lists) — cap
+  // frame size so a hostile/broken client can't force large-buffer
+  // allocation per message.
+  const wss = new WebSocketServer({ noServer: true, maxPayload: 64 * 1024 });
 
   server.on('upgrade', (req, socket, head) => {
     sessionParser(req, {}, () => {
@@ -100,6 +103,15 @@ function attachWebSocket(server, sessionParser) {
       } catch (e) {
         send({ type: 'error', message: e.code || 'error' });
       }
+    });
+
+    // Without this, a protocol-level error on ONE socket (e.g. a malformed
+    // UTF-8 text frame, or an oversized frame) is an unhandled 'error' event
+    // on this EventEmitter, which crashes the entire Node process — taking
+    // down every room, not just this connection. 'close' still fires
+    // afterward and does the actual room cleanup below.
+    ws.on('error', (err) => {
+      console.warn(`[ws] socket error for ${username}:`, err.message);
     });
 
     ws.on('close', () => {

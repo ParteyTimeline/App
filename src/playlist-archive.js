@@ -51,7 +51,18 @@ function parseTarGz(buf) {
     if (header.every((b) => b === 0)) break; // end-of-archive marker
     const name = header.subarray(0, 100).toString('utf8').replace(/\0.*$/s, '');
     const sizeOctal = header.subarray(124, 136).toString('utf8').replace(/\0.*$/s, '').trim();
-    const size = parseInt(sizeOctal, 8) || 0;
+    const size = parseInt(sizeOctal, 8);
+    // A malformed/negative/oversized size must not be trusted: a negative
+    // size (e.g. from a crafted octal field) cancels out the header's own
+    // 512 bytes below and sends `offset` right back to where it started —
+    // reprocessing the same header forever with no progress, hanging
+    // whichever request triggered the parse (the admin-only playlist
+    // import route). A size bigger than what's left in the buffer would
+    // otherwise silently read a truncated/garbage entry instead of
+    // rejecting the archive outright.
+    if (!Number.isInteger(size) || size < 0 || size > tarBuf.length - offset - BLOCK) {
+      throw new Error('invalid tar entry size');
+    }
     offset += BLOCK;
     if (name) entries.push({ name, data: Buffer.from(tarBuf.subarray(offset, offset + size)) });
     offset += size + ((BLOCK - (size % BLOCK)) % BLOCK);

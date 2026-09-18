@@ -9,19 +9,63 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+// Only Deezer's own domains — detectSource() in server.js only routes here
+// after already classifying the pasted link as Deezer by hostname, but
+// re-checking here means this function stays safe to call with untrusted
+// input on its own, and closes the window between that check and this
+// fetch. Without a host allowlist, this function would fetch ANY URL a
+// caller handed it (with automatic redirect-following) — full SSRF: the
+// server itself issuing a request to any host/port a caller named.
+const ALLOWED_DEEZER_HOST_SUFFIXES = ['deezer.com', 'dzcdn.net'];
+
+function isAllowedDeezerHost(hostname) {
+  const h = String(hostname || '').toLowerCase();
+  return ALLOWED_DEEZER_HOST_SUFFIXES.some((suffix) => h === suffix || h.endsWith('.' + suffix));
+}
+
+function isAllowedDeezerUrl(url) {
+  return (url.protocol === 'https:' || url.protocol === 'http:') && isAllowedDeezerHost(url.hostname);
+}
+
 async function resolveToPlaylistId(input) {
-  let url = String(input || '').trim();
-  if (/^\d+$/.test(url)) return url;
-  if (!/^https?:\/\//i.test(url)) url = 'https://' + url;
-  let res;
+  const trimmed = String(input || '').trim();
+  if (/^\d+$/.test(trimmed)) return trimmed;
+
+  let url;
   try {
-    res = await fetch(url, { redirect: 'follow' });
+    url = new URL(/^https?:\/\//i.test(trimmed) ? trimmed : 'https://' + trimmed);
   } catch (e) {
-    throw new Error('Link konnte nicht geöffnet werden');
+    throw new Error('Das ist kein Deezer-Playlist-Link');
   }
-  const finalUrl = res.url || url;
-  const m = finalUrl.match(/playlist\/(\d+)/);
-  if (m) return m[1];
+  if (!isAllowedDeezerUrl(url)) throw new Error('Das ist kein Deezer-Playlist-Link');
+
+  // Redirects are followed manually (not fetch's own redirect:'follow') so
+  // every hop's target host is checked too — a Deezer short link is
+  // allowed to redirect to another Deezer page, never to an arbitrary or
+  // internal/loopback host.
+  let current = url;
+  for (let hop = 0; hop < 5; hop++) {
+    let res;
+    try {
+      res = await fetch(current, { redirect: 'manual', signal: AbortSignal.timeout(15000) });
+    } catch (e) {
+      throw new Error('Link konnte nicht geöffnet werden');
+    }
+    if (res.status >= 300 && res.status < 400 && res.headers.get('location')) {
+      let next;
+      try {
+        next = new URL(res.headers.get('location'), current);
+      } catch (e) {
+        throw new Error('Das ist kein Deezer-Playlist-Link');
+      }
+      if (!isAllowedDeezerUrl(next)) throw new Error('Das ist kein Deezer-Playlist-Link');
+      current = next;
+      continue;
+    }
+    const m = current.toString().match(/playlist\/(\d+)/);
+    if (m) return m[1];
+    throw new Error('Das ist kein Deezer-Playlist-Link');
+  }
   throw new Error('Das ist kein Deezer-Playlist-Link');
 }
 

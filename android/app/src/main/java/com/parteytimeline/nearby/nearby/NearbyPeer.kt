@@ -552,23 +552,37 @@ class NearbyPeer(context: Context, private val localDisplayName: String) {
                 } else {
                     Log.d(TAG, "tunnel.onLinkClosed for $endpointId")
                     onDisconnected?.invoke()
-                    // Re-validate immediately before the effect below: the
-                    // notification above can run arbitrary/blocking code,
-                    // during which a replacement attempt to this same
-                    // endpoint may already have taken over — trusting the
-                    // check made before that call would target the
-                    // replacement's connection, not this dead one's.
-                    if (synchronized(tunnelLock) { tunnel !== tunnelClient }) {
-                        Log.w(TAG, "Skipping disconnectFromEndpoint($endpointId) — a replacement took over during notification")
-                    } else {
-                        // The mux relay can die (IOException on its own reader
-                        // thread) without Nearby ever noticing/firing its own
-                        // onDisconnected — e.g. mid-session, well after the startup
-                        // watchdog above stopped being relevant. Force it so our
-                        // reconnect-with-backoff (driven by onDisconnected) always
-                        // gets a chance to run; a no-op if Nearby already agrees
-                        // the endpoint is gone.
-                        client.disconnectFromEndpoint(endpointId)
+                    // A re-check performed here and the disconnect effect
+                    // performed a moment later, EACH under its own lock
+                    // acquisition, still isn't atomic — a competing thread
+                    // can slip in between the two, no blocking callback
+                    // required, ordinary preemption is enough. Ownership
+                    // must instead be validated AND the SDK effect fired as
+                    // ONE critical section: any competing ownership change
+                    // (a replacement tunnel installed in onPayloadReceived,
+                    // or this one torn down in teardownTunnel — both go
+                    // through the same lock) is forced to wait until this
+                    // operation has either committed or backed out.
+                    // client.disconnectFromEndpoint() is a fire-and-forget
+                    // SDK call, not a blocking one, so holding the lock
+                    // across it doesn't risk stalling unrelated work — the
+                    // genuinely blocking teardown (stop()) and the
+                    // arbitrary app callback above both stay outside any
+                    // critical section, per the same reasoning as
+                    // teardownTunnel()'s split above.
+                    synchronized(tunnelLock) {
+                        if (tunnel === tunnelClient) {
+                            // The mux relay can die (IOException on its own reader
+                            // thread) without Nearby ever noticing/firing its own
+                            // onDisconnected — e.g. mid-session, well after the startup
+                            // watchdog above stopped being relevant. Force it so our
+                            // reconnect-with-backoff (driven by onDisconnected) always
+                            // gets a chance to run; a no-op if Nearby already agrees
+                            // the endpoint is gone.
+                            client.disconnectFromEndpoint(endpointId)
+                        } else {
+                            Log.w(TAG, "Skipping disconnectFromEndpoint($endpointId) — a replacement took over during notification")
+                        }
                     }
                 }
             }

@@ -292,6 +292,67 @@ private fun tunnelCloseRacingReplacement() {
     }
 }
 
+private fun tunnelCloseRacingAfterFinalCheck() {
+    val (peer, client) = fixture()
+    val atSdkBoundary = CountDownLatch(1)
+    val releaseSdk = CountDownLatch(1)
+    val replacementStarted = CountDownLatch(1)
+    val replacementDone = CountDownLatch(1)
+    val error = AtomicReference<Throwable?>()
+    val hitReplacement = java.util.concurrent.atomic.AtomicBoolean(false)
+    var reader: Thread? = null
+    var replacement: Thread? = null
+    try {
+        activate(peer, client)
+        val oldAttempt = client.lifecycle
+        val field = peer.javaClass.getDeclaredField("tunnel").apply { isAccessible = true }
+        val oldTunnel = field.get(peer) as com.parteytimeline.nearby.tunnel.PeerTunnelClient
+        val close = checkNotNull(oldTunnel.onLinkClosed)
+        client.beforeDisconnect = {
+            if (Thread.currentThread() === reader) {
+                // Both production identity checks have already passed. A
+                // real thread may be preempted at this SDK-call boundary.
+                atSdkBoundary.countDown()
+                check(releaseSdk.await(5, TimeUnit.SECONDS)) { "SDK boundary was not released" }
+                hitReplacement.set(client.lifecycle !== oldAttempt)
+            }
+        }
+        reader = Thread({
+            try { close() } catch (t: Throwable) { error.set(t) }
+        }, "review-close-at-sdk-boundary")
+        reader.start()
+        check(atSdkBoundary.await(5, TimeUnit.SECONDS)) { "close did not reach SDK boundary" }
+        replacement = Thread({
+            try {
+                replacementStarted.countDown()
+                peer.disconnect()
+                activate(peer, client)
+            } catch (t: Throwable) { error.set(t) }
+            finally { replacementDone.countDown() }
+        }, "review-replacement-controller").also { it.start() }
+        check(replacementStarted.await(5, TimeUnit.SECONDS)) { "replacement thread did not start" }
+        // A correct critical section may block replacement until the old
+        // SDK operation finishes. Allow that ordering too: release the old
+        // call after a bounded window, then join both before asserting.
+        replacementDone.await(2, TimeUnit.SECONDS)
+        releaseSdk.countDown()
+        reader.join(5000)
+        replacement.join(5000)
+        check(!reader.isAlive && !replacement.isAlive) { "callback/replacement did not finish" }
+        error.get()?.let { throw it }
+        check(!hitReplacement.get()) {
+            "old close reached endpoint-wide disconnect after a replacement took ownership, despite the second identity check"
+        }
+        check(state(peer) is PeerState.Active) { "replacement must remain active" }
+    } finally {
+        releaseSdk.countDown()
+        reader?.join(5000)
+        replacement?.join(5000)
+        client.beforeDisconnect = null
+        peer.disconnect()
+    }
+}
+
 fun main() {
     val cases = listOf<Pair<String, () -> Unit>>(
         "retry exhaustion after request failures becomes terminal" to { exhausted("fail") },
@@ -311,6 +372,7 @@ fun main() {
         "payload failure from disconnected attempt is ignored during backoff" to ::payloadFailureDuringBackoff,
         "failed request cannot accept a later initiation while idle" to ::initiationAfterRequestFailure,
         "in-flight tunnel close cannot disconnect a replacement after its identity check" to ::tunnelCloseRacingReplacement,
+        "tunnel ownership cannot change between final check and SDK disconnect" to ::tunnelCloseRacingAfterFinalCheck,
     )
     var failed = 0
     for ((name, run) in cases) {

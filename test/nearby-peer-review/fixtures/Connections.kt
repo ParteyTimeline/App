@@ -45,6 +45,8 @@ class ConnectionsClient {
     val requests = mutableListOf<Task>()
     val acceptedPayloads = mutableListOf<Pair<String, PayloadCallback>>()
     val disconnected = mutableListOf<String>()
+    // Test-only scheduling point before an endpoint-wide SDK effect.
+    var beforeDisconnect: ((String) -> Unit)? = null
     fun startDiscovery(id:String, callback:EndpointDiscoveryCallback, options:DiscoveryOptions):Task { discovery=callback; return Task() }
     fun stopDiscovery() {}
     fun requestConnection(name:String, endpointId:String, callback:ConnectionLifecycleCallback, options:ConnectionOptions):Task {
@@ -55,6 +57,7 @@ class ConnectionsClient {
     fun acceptConnection(endpointId:String, callback:PayloadCallback) { acceptedPayloads.add(endpointId to callback) }
     fun sendPayload(endpointId:String, payload:Payload) { sent++ }
     fun disconnectFromEndpoint(endpointId:String) {
+        beforeDisconnect?.invoke(endpointId)
         disconnected.add(endpointId)
         // Capture the attempt at the time of the SDK operation. Dispatching
         // through the latest mutable field would misattribute old callbacks.

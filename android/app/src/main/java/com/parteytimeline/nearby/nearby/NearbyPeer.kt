@@ -120,11 +120,22 @@ class NearbyPeer(context: Context, private val localDisplayName: String) {
             on<PeerEvent.NearbyConnectSucceeded> { transitionTo(PeerState.Connected(it.endpointId, attempt)) }
             on<PeerEvent.BackToIdle> { transitionTo(PeerState.Idle) }
             on<PeerEvent.EnterReconnecting> { transitionTo(PeerState.Reconnecting(it.attempt)) }
+            // scheduleReconnect() computes attempt from whichever state
+            // holds it (see currentAttempt()) — since Connecting/Connected
+            // now preserve that count instead of resetting it, exhaustion
+            // (attempt >= MAX_RECONNECT_ATTEMPTS) can be DETECTED while
+            // still in either of these two states, not only Reconnecting.
+            // Without a handler here, that GiveUp transition was invalid
+            // (a no-op), yet onReconnectGaveUp still fired unconditionally
+            // — a give-up notification with the peer silently still stuck
+            // Connecting/Connected instead of actually reaching GaveUp.
+            on<PeerEvent.GiveUp> { transitionTo(PeerState.GaveUp) }
             on<PeerEvent.ManualDisconnect> { transitionTo(PeerState.Idle) }
         }
         state<PeerState.Connected> {
             on<PeerEvent.TunnelActive> { transitionTo(PeerState.Active(it.endpointId)) }
             on<PeerEvent.EnterReconnecting> { transitionTo(PeerState.Reconnecting(it.attempt)) }
+            on<PeerEvent.GiveUp> { transitionTo(PeerState.GaveUp) } // see PeerState.Connecting's identical handler above for why
             on<PeerEvent.ManualDisconnect> { transitionTo(PeerState.Idle) }
         }
         state<PeerState.Active> {
@@ -173,6 +184,12 @@ class NearbyPeer(context: Context, private val localDisplayName: String) {
     private var lastEndpointId: String? = null
     private var lastEndpointName: String? = null
 
+    // Which attempt's ConnectionLifecycleCallback is the one actually in
+    // flight right now — see makeConnectionLifecycleCallback()'s comment.
+    // A plain endpointId comparison can't tell a cancelled attempt apart
+    // from a NEWER attempt to that same endpoint; reference identity can.
+    private var currentAttemptCallback: ConnectionLifecycleCallback? = null
+
     var onHostFound: ((NearbyHostCandidate) -> Unit)? = null
     var onHostLost: ((endpointId: String) -> Unit)? = null
     var onConnecting: ((endpointId: String) -> Unit)? = null
@@ -219,8 +236,16 @@ class NearbyPeer(context: Context, private val localDisplayName: String) {
         val connectionOptions = ConnectionOptions.Builder()
             .setConnectionType(ConnectionType.NON_DISRUPTIVE)
             .build()
-        client.requestConnection(localDisplayName, endpointId, connectionLifecycleCallback, connectionOptions)
+        // A fresh callback instance per attempt (not a single shared
+        // field) — see makeConnectionLifecycleCallback()'s comment for why:
+        // reference identity is what lets a callback delivered after ITS
+        // attempt was cancelled/replaced be recognized as stale, even when
+        // the replacement targets this exact same endpoint.
+        val callback = makeConnectionLifecycleCallback()
+        currentAttemptCallback = callback
+        client.requestConnection(localDisplayName, endpointId, callback, connectionOptions)
             .addOnFailureListener {
+                if (currentAttemptCallback !== callback) return@addOnFailureListener
                 onConnectionFailed?.invoke(endpointId)
                 if (lastEndpointId != null) scheduleReconnect() else machine.transition(PeerEvent.BackToIdle)
             }
@@ -241,6 +266,11 @@ class NearbyPeer(context: Context, private val localDisplayName: String) {
             else -> null
         }
         machine.transition(PeerEvent.ManualDisconnect)
+        // Invalidates whatever attempt was just abandoned — see
+        // makeConnectionLifecycleCallback()'s comment. A late callback for
+        // it must be recognized as stale even if no NEWER attempt has
+        // replaced it yet (e.g. a cancel with no immediate retry).
+        currentAttemptCallback = null
         handler.removeCallbacksAndMessages(null)
         lastEndpointId = null
         lastEndpointName = null
@@ -263,24 +293,38 @@ class NearbyPeer(context: Context, private val localDisplayName: String) {
         }
     }
 
-    private val connectionLifecycleCallback = object : ConnectionLifecycleCallback() {
+    // A fresh instance per attempt, created by connectTo() — NOT a single
+    // shared field like this used to be. Nearby only ever hands a callback
+    // back its own endpointId, never anything identifying WHICH attempt it
+    // was for, and two different attempts can legitimately target the very
+    // same endpoint one after another (cancel, then retry the same host).
+    // With one shared callback object, a stale delivery for an abandoned
+    // attempt was indistinguishable from a legitimate one for a NEWER
+    // attempt to that identical endpoint — an endpointId-only guard (still
+    // kept below as belt-and-suspenders) cannot tell those apart, but
+    // reference identity against currentAttemptCallback always can.
+    private fun makeConnectionLifecycleCallback(): ConnectionLifecycleCallback = object : ConnectionLifecycleCallback() {
         override fun onConnectionInitiated(endpointId: String, info: ConnectionInfo) {
             client.acceptConnection(endpointId, payloadCallback)
         }
 
         override fun onConnectionResult(endpointId: String, resolution: ConnectionResolution) {
+            if (currentAttemptCallback !== this) {
+                Log.w(TAG, "Ignoring onConnectionResult($endpointId) from a superseded attempt")
+                if (resolution.status.isSuccess) client.disconnectFromEndpoint(endpointId)
+                return
+            }
             Log.d(TAG, "onConnectionResult($endpointId, success=${resolution.status.isSuccess}, statusCode=${resolution.status.statusCode})")
             if (!resolution.status.isSuccess) {
                 onConnectionFailed?.invoke(endpointId)
                 if (lastEndpointId != null) scheduleReconnect() else machine.transition(PeerEvent.BackToIdle)
                 return
             }
-            // A disconnect()/newer connectTo() can move us away from
-            // Connecting(endpointId) before this async callback arrives
-            // (cancel-then-late-success). Only accept the success if we're
-            // still actually waiting on THIS endpoint — otherwise reject
-            // and tell Nearby to drop it too, rather than building a tunnel
-            // for a connection nothing tracks anymore.
+            // Belt-and-suspenders alongside the identity check above: the
+            // state machine itself must still agree we're waiting on THIS
+            // endpoint (covers a disconnect()/newer connectTo() moving us
+            // away from Connecting(endpointId) before this async callback
+            // arrives, i.e. cancel-then-late-success).
             val connecting = machine.state as? PeerState.Connecting
             if (connecting == null || connecting.endpointId != endpointId) {
                 Log.w(TAG, "Ignoring stale onConnectionResult success for $endpointId (state=${machine.state})")
@@ -297,7 +341,9 @@ class NearbyPeer(context: Context, private val localDisplayName: String) {
             // upgrade, with no error and no onDisconnected. If we're still
             // waiting on the host's payload (no tunnel yet) after this
             // window, treat the link as dead ourselves.
+            val self = this
             handler.postDelayed({
+                if (currentAttemptCallback !== self) return@postDelayed
                 val current = machine.state
                 if (current is PeerState.Connected && current.endpointId == endpointId) {
                     Log.w(TAG, "No payload received from host within watchdog window for $endpointId — treating link as stalled")
@@ -307,6 +353,25 @@ class NearbyPeer(context: Context, private val localDisplayName: String) {
         }
 
         override fun onDisconnected(endpointId: String) {
+            if (currentAttemptCallback !== this) {
+                Log.w(TAG, "Ignoring onDisconnected($endpointId) from a superseded attempt")
+                return
+            }
+            // The endpointId this fires for isn't necessarily the one our
+            // OWN active/connected state currently cares about — a queued
+            // disconnect for an already-abandoned endpoint can still land
+            // after a newer endpoint's connection has already taken over.
+            // Only Connected/Active carry an endpoint to compare against;
+            // any other current state has nothing at stake here yet.
+            val currentEndpointId = when (val s = machine.state) {
+                is PeerState.Connected -> s.endpointId
+                is PeerState.Active -> s.endpointId
+                else -> null
+            }
+            if (currentEndpointId != null && currentEndpointId != endpointId) {
+                Log.w(TAG, "Ignoring onDisconnected($endpointId) — current endpoint is $currentEndpointId")
+                return
+            }
             Log.d(TAG, "onDisconnected($endpointId)")
             teardownTunnel()
             onDisconnected?.invoke()

@@ -120,3 +120,44 @@ test('REGRESSION: imported covers cannot trigger requests to a private host duri
   assert.notEqual(playlist.cacheStatus, 'caching', 'fixture prefetch must finish before inspecting requests');
   assert.ok(!server.requests.includes(privateUrl), 'an archive-controlled cover crossed the private-network fetch boundary');
 });
+
+test('REGRESSION: account registration cannot acquire an existing local guest identity', async t => {
+  const server = await fixture(t);
+  const local = await guest(server, 'LocalHost');
+  const created = await server.call('/api/rooms', { method: 'POST', cookie: local.cookie, body: {} });
+  assert.equal(created.status, 200);
+  const registered = await server.call('/api/register', { method: 'POST', body: { username: 'LocalHost', password: 'fixture-password' } });
+  if (registered.status >= 400) return;
+  const other = await server.call('/api/me', { cookie: registered.cookie });
+  assert.notEqual(other.json.username, server.rooms.getRoom(created.json.code).hostUsername,
+    'a newly registered account must not inherit a different cookie owner\'s host identity');
+});
+
+for (const cover of ['http://[::1]/private', 'http://[fd00::1]/private', 'http://[::ffff:127.0.0.1]/private']) {
+  test('REGRESSION: imported covers reject private IPv6 address ' + cover, async t => {
+    const server = await fixture(t);
+    const { cookie } = await guest(server);
+    const imported = await server.call('/api/playlists/import', {
+      method: 'POST', cookie, admin: true,
+      body: archive(server, { name: 'IPv6 cover fixture', tracks: [{ ...track, cover }] }),
+    });
+    assert.equal(imported.status, 400, 'private IPv6 cover must not be accepted: ' + cover);
+  });
+}
+
+test('REGRESSION: IPv6 private covers are blocked at the actual prefetch boundary', async t => {
+  const server = await fixture(t);
+  const { cookie } = await guest(server);
+  // Seed a legacy imported record so this independently tests the downloader,
+  // even after the import validation is repaired. All fetches are intercepted.
+  const cover = 'http://[::1]:9000/private-review-fixture';
+  server.playlists.set('legacy-ipv6', { id: 'legacy-ipv6', name: 'Legacy cover', status: 'ready', tracks: [{ ...track, cover }] });
+  const response = await server.call('/api/playlists/legacy-ipv6/prefetch', { method: 'POST', cookie });
+  assert.equal(response.status, 200);
+  const playlist = server.playlists.get('legacy-ipv6');
+  for (let i = 0; i < 100 && playlist.cacheStatus === 'caching'; i++) {
+    await new Promise(resolve => setTimeout(resolve, 10));
+  }
+  assert.notEqual(playlist.cacheStatus, 'caching');
+  assert.ok(!server.requests.includes(cover), 'actual cover-cache fetch received a loopback IPv6 URL');
+});

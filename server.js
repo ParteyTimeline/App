@@ -115,6 +115,15 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 app.post('/api/register', (req, res) => {
   const { username, password } = req.body || {};
+  // See localClaimedNames' own comment near /api/local/join: a local guest
+  // can claim a name (and, e.g., host a room under it) before any account
+  // by that name exists. Without this check, registration only looked at
+  // the account store — which has no record of that guest at all — so a
+  // second, different session could register that exact name and inherit
+  // the first session's identity (room ownership included).
+  if (typeof username === 'string' && localClaimedNames.has(username) && localClaimedNames.get(username) !== req.sessionID) {
+    return res.status(400).json({ error: 'Nutzername ist schon vergeben', code: 'exists' });
+  }
   try {
     auth.register(username, password);
     req.session.user = username;

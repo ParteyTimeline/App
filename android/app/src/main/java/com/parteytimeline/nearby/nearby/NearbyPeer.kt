@@ -169,6 +169,18 @@ class NearbyPeer(context: Context, private val localDisplayName: String) {
         else -> 0
     }
 
+    // The endpoint (if any) a CURRENT attempt is mid-flight or live on.
+    // Lets stale-callback cleanup tell a truly orphaned endpoint (nothing
+    // claims it — safe to disconnect) apart from one a REPLACEMENT attempt
+    // now owns (disconnecting it would tear down the replacement, not the
+    // abandoned attempt, whenever both happen to target the same host).
+    private fun currentlyOwnedEndpointId(): String? = when (val s = machine.state) {
+        is PeerState.Connecting -> s.endpointId
+        is PeerState.Connected -> s.endpointId
+        is PeerState.Active -> s.endpointId
+        else -> null
+    }
+
     // Lets MainActivity tell a genuinely idle peer (discovery stopped,
     // nothing connecting, no tunnel) apart from one still legitimately
     // mid-flight — see its onResume().
@@ -305,13 +317,28 @@ class NearbyPeer(context: Context, private val localDisplayName: String) {
     // reference identity against currentAttemptCallback always can.
     private fun makeConnectionLifecycleCallback(): ConnectionLifecycleCallback = object : ConnectionLifecycleCallback() {
         override fun onConnectionInitiated(endpointId: String, info: ConnectionInfo) {
-            client.acceptConnection(endpointId, payloadCallback)
+            if (currentAttemptCallback !== this) {
+                Log.w(TAG, "Ignoring onConnectionInitiated($endpointId) from a superseded attempt")
+                return
+            }
+            // A payload callback tied to THIS attempt, not a shared field —
+            // otherwise a stream/transfer-update for an abandoned attempt
+            // would be indistinguishable from one for its replacement the
+            // moment both target the same endpoint (mirrors why the
+            // lifecycle callback itself is per-attempt — see this class's
+            // comment above makeConnectionLifecycleCallback).
+            client.acceptConnection(endpointId, makePayloadCallback(this))
         }
 
         override fun onConnectionResult(endpointId: String, resolution: ConnectionResolution) {
             if (currentAttemptCallback !== this) {
                 Log.w(TAG, "Ignoring onConnectionResult($endpointId) from a superseded attempt")
-                if (resolution.status.isSuccess) client.disconnectFromEndpoint(endpointId)
+                // Only clean up a truly orphaned endpoint. If a REPLACEMENT
+                // attempt now owns this same endpointId, disconnecting here
+                // would tear down that replacement, not the stale attempt.
+                if (resolution.status.isSuccess && currentlyOwnedEndpointId() != endpointId) {
+                    client.disconnectFromEndpoint(endpointId)
+                }
                 return
             }
             Log.d(TAG, "onConnectionResult($endpointId, success=${resolution.status.isSuccess}, statusCode=${resolution.status.statusCode})")
@@ -434,10 +461,21 @@ class NearbyPeer(context: Context, private val localDisplayName: String) {
         }
     }
 
-    private val payloadCallback = object : PayloadCallback() {
+    // One fresh instance per accepted connection (created in
+    // onConnectionInitiated above), tied back to the lifecycle callback
+    // that accepted it — NOT a single shared field. Two attempts to the
+    // same endpoint each register their own PayloadCallback with Nearby;
+    // without the [owner] identity check, a stream/transfer-update meant
+    // for an abandoned attempt was indistinguishable from one for its
+    // replacement.
+    private fun makePayloadCallback(owner: ConnectionLifecycleCallback): PayloadCallback = object : PayloadCallback() {
         override fun onPayloadReceived(endpointId: String, payload: Payload) {
             Log.d(TAG, "onPayloadReceived($endpointId, type=${payload.type})")
             if (payload.type != Payload.Type.STREAM) return
+            if (currentAttemptCallback !== owner) {
+                Log.w(TAG, "Ignoring stream payload from $endpointId (superseded attempt)")
+                return
+            }
             // Same late-arrival guard as onConnectionResult above: a stream
             // payload for an endpoint we've since disconnected/moved past
             // (state no longer Connected(endpointId)) must not start a
@@ -456,16 +494,25 @@ class NearbyPeer(context: Context, private val localDisplayName: String) {
             val tunnelClient = PeerTunnelClient(input, output)
             tunnel = tunnelClient
             tunnelClient.onLinkClosed = {
-                Log.d(TAG, "tunnel.onLinkClosed for $endpointId")
-                onDisconnected?.invoke()
-                // The mux relay can die (IOException on its own reader
-                // thread) without Nearby ever noticing/firing its own
-                // onDisconnected — e.g. mid-session, well after the startup
-                // watchdog above stopped being relevant. Force it so our
-                // reconnect-with-backoff (driven by onDisconnected) always
-                // gets a chance to run; a no-op if Nearby already agrees
-                // the endpoint is gone.
-                client.disconnectFromEndpoint(endpointId)
+                // The real relay's reader thread can already have this
+                // closure queued/in flight when a newer attempt replaces
+                // the tunnel — clearing the `tunnel` field alone doesn't
+                // recall an invocation already captured by that thread, so
+                // check identity here too, not just when scheduling it.
+                if (tunnel !== tunnelClient) {
+                    Log.w(TAG, "Ignoring onLinkClosed for a superseded tunnel ($endpointId)")
+                } else {
+                    Log.d(TAG, "tunnel.onLinkClosed for $endpointId")
+                    onDisconnected?.invoke()
+                    // The mux relay can die (IOException on its own reader
+                    // thread) without Nearby ever noticing/firing its own
+                    // onDisconnected — e.g. mid-session, well after the startup
+                    // watchdog above stopped being relevant. Force it so our
+                    // reconnect-with-backoff (driven by onDisconnected) always
+                    // gets a chance to run; a no-op if Nearby already agrees
+                    // the endpoint is gone.
+                    client.disconnectFromEndpoint(endpointId)
+                }
             }
             val localPort = tunnelClient.start()
             // reconnectAttempt resets naturally here: Active carries no
@@ -485,6 +532,10 @@ class NearbyPeer(context: Context, private val localDisplayName: String) {
 
         override fun onPayloadTransferUpdate(endpointId: String, update: PayloadTransferUpdate) {
             Log.d(TAG, "onPayloadTransferUpdate($endpointId, status=${update.status}, bytes=${update.bytesTransferred}/${update.totalBytes})")
+            if (currentAttemptCallback !== owner) {
+                Log.w(TAG, "Ignoring onPayloadTransferUpdate($endpointId) from a superseded attempt")
+                return
+            }
             if (update.status == PayloadTransferUpdate.Status.FAILURE) {
                 Log.w(TAG, "Payload transfer failed for $endpointId — forcing disconnect to trigger reconnect")
                 client.disconnectFromEndpoint(endpointId)

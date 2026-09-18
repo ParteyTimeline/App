@@ -43,6 +43,7 @@ class ConnectionsClient {
     var sent = 0
     val callbacks = mutableListOf<ConnectionLifecycleCallback>()
     val requests = mutableListOf<Task>()
+    val acceptedPayloads = mutableListOf<Pair<String, PayloadCallback>>()
     val disconnected = mutableListOf<String>()
     fun startDiscovery(id:String, callback:EndpointDiscoveryCallback, options:DiscoveryOptions):Task { discovery=callback; return Task() }
     fun stopDiscovery() {}
@@ -51,10 +52,13 @@ class ConnectionsClient {
         if(requestMode == "success") callback.onConnectionResult(endpointId, ConnectionResolution(Status(true)))
         return Task(requestMode == "fail").also { requests.add(it) }
     }
-    fun acceptConnection(endpointId:String, callback:PayloadCallback) {}
+    fun acceptConnection(endpointId:String, callback:PayloadCallback) { acceptedPayloads.add(endpointId to callback) }
     fun sendPayload(endpointId:String, payload:Payload) { sent++ }
     fun disconnectFromEndpoint(endpointId:String) {
         disconnected.add(endpointId)
-        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(Runnable { lifecycle.onDisconnected(endpointId) }, 0)
+        // Capture the attempt at the time of the SDK operation. Dispatching
+        // through the latest mutable field would misattribute old callbacks.
+        val callback = lifecycle
+        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(Runnable { callback.onDisconnected(endpointId) }, 0)
     }
 }

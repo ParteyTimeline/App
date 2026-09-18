@@ -26,9 +26,9 @@ private fun state(peer: NearbyPeer): PeerState {
 
 private fun activate(peer: NearbyPeer, client: ConnectionsClient, endpoint: String = "host") {
     peer.connectTo(endpoint)
+    client.lifecycle.onConnectionInitiated(endpoint, ConnectionInfo())
     client.lifecycle.onConnectionResult(endpoint, ConnectionResolution(Status(true)))
-    val field = peer.javaClass.getDeclaredField("payloadCallback").apply { isAccessible = true }
-    (field.get(peer) as PayloadCallback).onPayloadReceived(endpoint, Payload())
+    client.acceptedPayloads.last().second.onPayloadReceived(endpoint, Payload())
     check(state(peer) is PeerState.Active) { "fixture must establish a tunnel" }
 }
 
@@ -122,6 +122,96 @@ private fun cancelledSuccess() {
     check(client.disconnected.contains("host")) { "stale endpoint was not disconnected" }
 }
 
+private fun staleSuccessCannotDisconnectReplacement() {
+    val (peer, client) = fixture()
+    try {
+        peer.connectTo("host")
+        val oldCallback = client.callbacks.last()
+        peer.disconnect()
+        activate(peer, client, "host")
+        val before = client.disconnected.size
+        oldCallback.onConnectionResult("host", ConnectionResolution(Status(true)))
+        check(client.disconnected.size == before) {
+            "stale success issued endpoint-wide disconnect against the replacement connection"
+        }
+        check(state(peer) is PeerState.Active) { "replacement must remain active" }
+    } finally { peer.disconnect() }
+}
+
+private fun staleInitiation() {
+    val (peer, client) = fixture()
+    try {
+        peer.connectTo("host")
+        val oldCallback = client.callbacks.last()
+        peer.disconnect()
+        peer.connectTo("host")
+        val before = client.acceptedPayloads.size
+        oldCallback.onConnectionInitiated("host", ConnectionInfo())
+        check(client.acceptedPayloads.size == before) {
+            "cancelled attempt still accepts a connection and registers its payload callback"
+        }
+    } finally { peer.disconnect() }
+}
+
+private fun staleStream() {
+    val (peer, client) = fixture()
+    try {
+        peer.connectTo("host")
+        client.lifecycle.onConnectionInitiated("host", ConnectionInfo())
+        val oldPayload = client.acceptedPayloads.last().second
+        client.lifecycle.onConnectionResult("host", ConnectionResolution(Status(true)))
+        peer.disconnect()
+        peer.connectTo("host")
+        client.lifecycle.onConnectionInitiated("host", ConnectionInfo())
+        client.lifecycle.onConnectionResult("host", ConnectionResolution(Status(true)))
+        var ready = 0
+        peer.onTunnelReady = { ready++ }
+        oldPayload.onPayloadReceived("host", Payload())
+        check(state(peer) is PeerState.Connected && ready == 0) {
+            "cancelled stream activated replacement tunnel: state=${state(peer)}, ready=$ready"
+        }
+        client.acceptedPayloads.last().second.onPayloadReceived("host", Payload())
+        check(state(peer) is PeerState.Active && ready == 1) { "current stream must still activate tunnel" }
+    } finally { peer.disconnect() }
+}
+
+private fun staleTransferFailure() {
+    val (peer, client) = fixture()
+    try {
+        activate(peer, client)
+        val oldPayload = client.acceptedPayloads.last().second
+        peer.disconnect()
+        activate(peer, client)
+        val before = client.disconnected.size
+        oldPayload.onPayloadTransferUpdate("host", PayloadTransferUpdate(PayloadTransferUpdate.Status.FAILURE))
+        check(client.disconnected.size == before) {
+            "old transfer failure disconnected the replacement endpoint"
+        }
+    } finally { peer.disconnect() }
+}
+
+private fun staleTunnelClose() {
+    val (peer, client) = fixture()
+    try {
+        activate(peer, client)
+        val field = peer.javaClass.getDeclaredField("tunnel").apply { isAccessible = true }
+        val oldTunnel = field.get(peer) as com.parteytimeline.nearby.tunnel.PeerTunnelClient
+        // Model a reader-thread callback that was already queued/in flight
+        // when the old tunnel was stopped; clearing the stored hook alone
+        // cannot recall this captured callback.
+        val pendingClose = checkNotNull(oldTunnel.onLinkClosed)
+        peer.disconnect()
+        activate(peer, client)
+        val before = client.disconnected.size
+        var notifications = 0
+        peer.onDisconnected = { notifications++ }
+        pendingClose()
+        check(client.disconnected.size == before && notifications == 0) {
+            "old tunnel close affected new connection: disconnects=${client.disconnected.size - before}, notifications=$notifications"
+        }
+    } finally { peer.disconnect() }
+}
+
 fun main() {
     val cases = listOf<Pair<String, () -> Unit>>(
         "retry exhaustion after request failures becomes terminal" to { exhausted("fail") },
@@ -133,6 +223,11 @@ fun main() {
         "cancelled same-endpoint attempt cannot claim replacement success" to ::sameEndpointLateSuccess,
         "duplicate tap on active peer issues no request" to ::duplicateTap,
         "success after cancellation while idle is rejected" to ::cancelledSuccess,
+        "stale success does not disconnect a replacement to the same host" to ::staleSuccessCannotDisconnectReplacement,
+        "stale initiation does not accept an abandoned attempt" to ::staleInitiation,
+        "stale incoming stream cannot activate a replacement attempt" to ::staleStream,
+        "stale payload failure cannot disconnect a replacement attempt" to ::staleTransferFailure,
+        "stale tunnel close cannot disconnect a replacement attempt" to ::staleTunnelClose,
     )
     var failed = 0
     for ((name, run) in cases) {

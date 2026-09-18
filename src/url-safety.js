@@ -64,7 +64,12 @@ function isPrivateIPv6(addr) {
 }
 
 function isPrivateOrLoopbackHost(hostname) {
-  const raw = String(hostname || '').toLowerCase();
+  // DNS allows (and browsers/fetch accept) an absolute name with a trailing
+  // root dot, e.g. "localhost." — same host, different string. Strip it
+  // before any comparison below, or that spelling sails through every check
+  // untouched (it's not an IP literal, so it would otherwise fall all the
+  // way through to "ordinary hostname, assume fine").
+  const raw = String(hostname || '').toLowerCase().replace(/\.+$/, '');
   if (raw === 'localhost') return true;
   // URL.hostname keeps the brackets on an IPv6 literal (e.g. "[::1]") —
   // net.isIP doesn't recognize that form at all and silently falls through

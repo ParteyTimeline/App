@@ -1,11 +1,13 @@
 param(
     [Parameter(Mandatory=$true)][string]$JavaExe,
     [Parameter(Mandatory=$true)][string]$KotlinLib,
-    [Parameter(Mandatory=$true)][string]$StateMachineSource
+    # Defaults to the vendored copy in vendor/StateMachine.kt (unmodified
+    # Tinder/StateMachine 0.3.0) — override only to test against a different
+    # version of the upstream source.
+    [string]$StateMachineSource = (Join-Path $PSScriptRoot 'vendor/StateMachine.kt')
 )
 $ErrorActionPreference = 'Stop'
-# KotlinLib is the lib directory of Kotlin 1.9.x or Gradle 8.10. The dependency
-# source must be Tinder/StateMachine's unmodified 0.3.0 StateMachine.kt.
+# KotlinLib is the lib directory of Kotlin 1.9.x or Gradle 8.10.
 $repo = (Resolve-Path (Join-Path $PSScriptRoot '../..')).Path
 $outputDir = Join-Path ([System.IO.Path]::GetTempPath()) ('hipster-peer-tests-' + [guid]::NewGuid())
 New-Item -ItemType Directory -Path $outputDir | Out-Null

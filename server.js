@@ -17,6 +17,7 @@ const coverCache = require('./src/cover-cache');
 const playlistArchive = require('./src/playlist-archive');
 const rooms = require('./src/rooms');
 const attachWebSocket = require('./src/ws');
+const { isSafeExternalUrl } = require('./src/url-safety');
 
 function detectSource(url) {
   const u = String(url || '');
@@ -62,16 +63,6 @@ function asyncHandler(fn) {
   };
 }
 
-function isSafeHttpUrl(value) {
-  if (typeof value !== 'string') return false;
-  try {
-    const u = new URL(value);
-    return u.protocol === 'http:' || u.protocol === 'https:';
-  } catch (e) {
-    return false;
-  }
-}
-
 // Gates what a re-imported .tar.gz playlist archive (see
 // /api/playlists/import below) is allowed to add to the shared library —
 // this data comes from a file an admin was handed, not from this server's
@@ -83,7 +74,7 @@ function isValidImportedTrack(t) {
   if (typeof t.t !== 'string' || !t.t.trim()) return false;
   if (typeof t.a !== 'string' || !t.a.trim()) return false;
   if (!Number.isInteger(t.y) || t.y < 1900 || t.y > new Date().getFullYear() + 1) return false;
-  if (t.cover != null && !isSafeHttpUrl(t.cover)) return false;
+  if (t.cover != null && !isSafeExternalUrl(t.cover)) return false;
   return true;
 }
 
@@ -562,18 +553,27 @@ app.post('/api/playlists/import', auth.requireAuth, auth.requireAdmin, express.r
   const byName = new Map(entries.map((e) => [e.name, e.data]));
   let audioRestored = 0;
   let coverRestored = 0;
-  for (const t of meta.tracks) {
-    const id = String(t.id);
-    const audioData = byName.get(audioEntryName(id));
-    if (audioData && !audioCache.isCached(id)) {
-      audioCache.cacheFromBuffer(id, audioData);
-      audioRestored++;
+  try {
+    for (const t of meta.tracks) {
+      const id = String(t.id);
+      const audioData = byName.get(audioEntryName(id));
+      if (audioData && !audioCache.isCached(id)) {
+        audioCache.cacheFromBuffer(id, audioData);
+        audioRestored++;
+      }
+      const coverData = byName.get(coverEntryName(id));
+      if (coverData && !coverCache.isCached(id)) {
+        coverCache.cacheFromBuffer(id, coverData);
+        coverRestored++;
+      }
     }
-    const coverData = byName.get(coverEntryName(id));
-    if (coverData && !coverCache.isCached(id)) {
-      coverCache.cacheFromBuffer(id, coverData);
-      coverRestored++;
-    }
+  } catch (e) {
+    // A write failure partway through (disk full, permissions, ...) must
+    // not leave a "ready" playlist sitting in the shared library backed by
+    // a cache that's only partially restored — remove it rather than
+    // reporting success for an import that didn't actually finish.
+    store.removePlaylist(playlist.id);
+    return res.status(500).json({ error: 'Cache-Wiederherstellung fehlgeschlagen', code: 'cache_restore_failed' });
   }
   if (audioRestored > 0) {
     store.updatePlaylist(playlist.id, {
@@ -704,6 +704,21 @@ app.post('/api/rooms/:code/join', auth.requireAuth, (req, res) => {
 // existing registered account's, with no password at all.
 let localJoinEnabled = !!process.env.LOCAL_CONTROL_TOKEN;
 
+// Local/no-account names are staked out the moment a session first picks
+// one — even before any room exists to check membership against. Without
+// this, two different, never-before-seen sessions could each end up with
+// `req.session.user` set to the exact same string (the checks below only
+// ever compared against an existing ROOM's members, not against other
+// sessions that had claimed the same name with no room yet), and every
+// room.teams/playerSelections lookup keyed by that string then can't tell
+// the two sessions apart — e.g. whichever one creates a room becomes its
+// hostUsername, and the OTHER session's own /api/me now reports that same
+// name too. Keyed by the exact name string (same case-sensitivity as the
+// room-membership checks below); cleared only by a process restart,
+// matching this feature's already-ephemeral, single-host-process-lifetime
+// scope (see localJoinEnabled's own comment above).
+const localClaimedNames = new Map(); // name -> sessionID
+
 app.post('/api/local/host-control', asyncHandler(async (req, res) => {
   const token = process.env.LOCAL_CONTROL_TOKEN;
   if (!token || req.headers['x-local-control-token'] !== token) {
@@ -787,6 +802,11 @@ app.post('/api/local/join', (req, res) => {
     return res.status(400).json({ error: 'Name ist schon vergeben', code: 'name_taken' });
   }
 
+  const claimedBy = localClaimedNames.get(name);
+  if (claimedBy && claimedBy !== req.sessionID) {
+    return res.status(400).json({ error: 'Name ist schon vergeben', code: 'name_taken' });
+  }
+
   if (room) {
     if (room.teams.some((t) => t.members.includes(name))) {
       return res.status(400).json({ error: 'Name ist schon vergeben', code: 'name_taken' });
@@ -796,6 +816,7 @@ app.post('/api/local/join', (req, res) => {
     }
   }
 
+  localClaimedNames.set(name, req.sessionID);
   req.session.user = name;
   if (room) {
     rooms.addPlayer(room, name);

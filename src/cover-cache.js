@@ -1,5 +1,6 @@
 const fs = require('fs');
 const path = require('path');
+const { isPrivateOrLoopbackHost } = require('./url-safety');
 
 const CACHE_DIR = path.join(__dirname, '..', 'data', 'cover-cache');
 
@@ -39,8 +40,38 @@ function writeAtomic(trackId, buffer) {
 // through the same same-origin endpoint a Nearby peer's tunnel already
 // reaches, instead of requiring the peer's own device to have internet
 // access to fetch it directly (see server.js's /api/track/:id/cover).
+//
+// A normal track's `cover` always comes from Deezer/Spotify's own trusted
+// API response, but an admin-imported playlist archive (see server.js's
+// /api/playlists/import) can carry an arbitrary `cover` string — without a
+// host check here, prefetching that playlist would make THIS server issue
+// a request to any host/port the archive named (redirects included), i.e.
+// SSRF. Followed manually so every redirect hop gets the same check, not
+// just the initial URL.
+function assertSafeCoverUrl(url) {
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') throw new Error('URL nicht erlaubt');
+  if (isPrivateOrLoopbackHost(url.hostname)) throw new Error('URL nicht erlaubt');
+}
+
 async function cacheFromUrl(trackId, url) {
-  const res = await fetch(url, { redirect: 'follow', signal: AbortSignal.timeout(15000) });
+  let current;
+  try {
+    current = new URL(url);
+  } catch (e) {
+    throw new Error('URL ungültig');
+  }
+  assertSafeCoverUrl(current);
+  let res;
+  for (let hop = 0; hop < 5; hop++) {
+    res = await fetch(current, { redirect: 'manual', signal: AbortSignal.timeout(15000) });
+    if (res.status >= 300 && res.status < 400 && res.headers.get('location')) {
+      const next = new URL(res.headers.get('location'), current);
+      assertSafeCoverUrl(next);
+      current = next;
+      continue;
+    }
+    break;
+  }
   if (!res.ok) throw new Error('HTTP ' + res.status);
   const buf = Buffer.from(await res.arrayBuffer());
   if (!buf.length) throw new Error('Leere Antwort');

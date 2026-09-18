@@ -280,18 +280,24 @@ function scheduleAudioHostGraceCheck(room, username, broadcastFn) {
 function startGame(room, username) {
   if (room.hostUsername !== username) throw err('not_host');
   if (room.phase !== 'lobby') throw err('bad_phase');
+  // Everything below is computed into LOCAL variables first and only
+  // committed to `room` once every check has passed — a rejected start
+  // (need_more_teams OR no_playlists_selected) must leave the lobby
+  // exactly as it was. It used to mutate room.teams/room.pools directly
+  // partway through, so a start rejected only by the no_playlists_selected
+  // check (thrown further down) still permanently dropped empty teams via
+  // the team-filtering step below, even though the start itself never
+  // went through.
+
   // Empty teams never get a turn — drop them for this game rather than
-  // stalling on a team nobody joined. Computed into a local candidate
-  // first: a rejected start (need_more_teams below) must leave the lobby
-  // exactly as it was, not permanently delete teams that were only empty
-  // because nobody had joined them YET.
+  // stalling on a team nobody joined.
   const candidateTeams = room.teams.filter((t) => t.members.length > 0);
   if (candidateTeams.length < 2) throw err('need_more_teams');
   // Randomize turn order once, here — not on every reshuffle/redraw — so it
   // stays fixed for the rest of this game. Team identity (name/color) stays
   // with each team object; only the array position (i.e. turnIndex order)
   // changes.
-  room.teams = room.shuffleTeamOrder ? shuffle(candidateTeams) : candidateTeams;
+  const orderedTeams = room.shuffleTeamOrder ? shuffle(candidateTeams) : candidateTeams;
 
   // Build per-player pools, but first dedupe by track id ACROSS THE WHOLE
   // ROOM: two people might have the same song in their own playlists (very
@@ -300,7 +306,7 @@ function startGame(room, username) {
   // id ends up owned by exactly one (randomly chosen, among whoever has it)
   // player, so it can only ever be drawn once, period.
   const perMemberTracks = {};
-  for (const t of room.teams) {
+  for (const t of orderedTeams) {
     for (const member of t.members) {
       const selection = room.playerSelections[member] || [];
       perMemberTracks[member] = [].concat(...selection.map((p) => p.tracks));
@@ -325,12 +331,15 @@ function startGame(room, username) {
   // (uniformly), then a song from theirs. A team with three contributing
   // members carries no more weight in the overall game than a team with
   // one — and within a team, no single member dominates either.
-  room.pools = {};
+  const pools = {};
   for (const [u, tracks] of Object.entries(finalTracks)) {
-    if (tracks.length) room.pools[u] = shuffle(tracks);
+    if (tracks.length) pools[u] = shuffle(tracks);
   }
-  if (Object.keys(room.pools).length === 0) throw err('no_playlists_selected');
+  if (Object.keys(pools).length === 0) throw err('no_playlists_selected');
 
+  // Every check passed — commit.
+  room.teams = orderedTeams;
+  room.pools = pools;
   for (const t of room.teams) {
     const starter = drawFromPools(room);
     if (starter) t.timeline.push(starter);

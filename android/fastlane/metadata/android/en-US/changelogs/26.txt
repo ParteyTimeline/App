@@ -1,0 +1,7 @@
+Fixes from a deeper follow-up review of the previous release: a reconnect
+give-up notification that could fire while the app kept quietly retrying,
+and a stale callback from an abandoned connection attempt that could
+briefly interfere with a newer one. Also closes an IPv6 gap in the
+embedded server's cover-image safety check and an identity mix-up between
+a Nearby/LAN guest and a newly registered account sharing the same name.
+No new features, and no changes to how a game looks or plays.

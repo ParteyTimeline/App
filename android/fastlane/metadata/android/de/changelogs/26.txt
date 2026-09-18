@@ -1,0 +1,9 @@
+Korrekturen aus einer vertieften Nachprüfung der letzten Version: eine
+"Aufgegeben"-Meldung bei der Wiederverbindung, die auftreten konnte,
+während die App im Hintergrund trotzdem weiter versuchte, und ein
+verspäteter Rückruf eines abgebrochenen Verbindungsversuchs, der kurz
+einen neueren Versuch stören konnte. Schließt außerdem eine IPv6-Lücke in
+der Sicherheitsprüfung des eingebetteten Servers für Cover-Bilder sowie
+eine Identitätsverwechslung zwischen einem Nearby-/LAN-Gast und einem neu
+registrierten Konto mit demselben Namen. Keine neuen Funktionen, keine
+Änderungen am Spielablauf oder Aussehen.

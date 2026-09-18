@@ -1,0 +1,10 @@
+Weitere Korrekturen aus einer fortgesetzten Prüfung der Nearby-
+Wiederverbindungslogik und der Sicherheitsprüfung des eingebetteten
+Servers für Cover-Bilder: ein seltener Fall, in dem ein abgebrochener
+Verbindungsversuch länger als vorgesehen einen neueren Versuch
+beeinflussen konnte, sowie ein enges Zeitfenster, in dem das Schließen
+einer Verbindung eine andere, bereits ersetzte Verbindung trennen
+konnte. Schließt außerdem eine verbleibende Lücke in der
+Sicherheitsprüfung für Cover-Bilder bei einer anders geschriebenen Form
+von "localhost". Keine neuen Funktionen, keine Änderungen am Spielablauf
+oder Aussehen.

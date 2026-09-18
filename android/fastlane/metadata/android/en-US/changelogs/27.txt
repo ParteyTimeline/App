@@ -1,0 +1,8 @@
+More fixes from continued review of the Nearby reconnect logic and the
+embedded server's cover-image safety check: a rare case where an
+abandoned connection attempt could still affect a newer one for longer
+than it should, and a narrow timing window where closing one connection
+could disconnect a different, already-replaced connection. Also closes a
+remaining loophole in the cover-image safety check for a differently
+spelled form of "localhost". No new features, and no changes to how a
+game looks or plays.

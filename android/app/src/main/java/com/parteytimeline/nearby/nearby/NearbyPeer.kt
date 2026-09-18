@@ -97,6 +97,17 @@ class NearbyPeer(context: Context, private val localDisplayName: String) {
     private var tunnel: PeerTunnelClient? = null
     private var outgoingOutput: OutputStream? = null
 
+    // Every other mutable field here is only ever touched from the main
+    // thread (Nearby's own callbacks and our own Handler dispatch all land
+    // there). `tunnel` is the one exception: its onLinkClosed hook (below)
+    // is invoked by the real MuxRelay's own reader thread, so a plain
+    // identity check ("is this still the current tunnel?") followed by an
+    // unsynchronized effect leaves a window where a main-thread reassignment
+    // (a replacement tunnel taking over, or teardown) can land in between —
+    // the check would still pass against stale state. This lock makes each
+    // read-and-decide on `tunnel` atomic with every place that reassigns it.
+    private val tunnelLock = Any()
+
     private val discoveryMachine = StateMachine.create<DiscoveryState, DiscoveryEvent, Unit> {
         initialState(DiscoveryState.NotDiscovering)
         state<DiscoveryState.NotDiscovering> {
@@ -258,6 +269,14 @@ class NearbyPeer(context: Context, private val localDisplayName: String) {
         client.requestConnection(localDisplayName, endpointId, callback, connectionOptions)
             .addOnFailureListener {
                 if (currentAttemptCallback !== callback) return@addOnFailureListener
+                // This attempt is over — a late initiation/result/payload
+                // callback still bearing this same callback instance must
+                // now read as stale too, not just a callback from a
+                // DIFFERENT (never-yet-created) attempt. See F1 in the
+                // matching comment on onDisconnected below for the full
+                // reasoning; this is the same gap at the request-failure
+                // entry point instead of the disconnect one.
+                currentAttemptCallback = null
                 onConnectionFailed?.invoke(endpointId)
                 if (lastEndpointId != null) scheduleReconnect() else machine.transition(PeerEvent.BackToIdle)
             }
@@ -343,6 +362,13 @@ class NearbyPeer(context: Context, private val localDisplayName: String) {
             }
             Log.d(TAG, "onConnectionResult($endpointId, success=${resolution.status.isSuccess}, statusCode=${resolution.status.statusCode})")
             if (!resolution.status.isSuccess) {
+                // Same reasoning as the request-failure listener in
+                // connectTo(): this attempt just ended, so its callback
+                // must stop being treated as "current" from here on —
+                // otherwise a late initiation/payload delivered on this
+                // same object would still pass the identity check during
+                // the entire backoff/idle window before the next connectTo().
+                currentAttemptCallback = null
                 onConnectionFailed?.invoke(endpointId)
                 if (lastEndpointId != null) scheduleReconnect() else machine.transition(PeerEvent.BackToIdle)
                 return
@@ -400,6 +426,20 @@ class NearbyPeer(context: Context, private val localDisplayName: String) {
                 return
             }
             Log.d(TAG, "onDisconnected($endpointId)")
+            // This attempt's Nearby-level connection just ended — its
+            // ownership must end with it. Previously only an explicit
+            // disconnect()/newer connectTo() cleared currentAttemptCallback,
+            // so a connection lost unexpectedly (or one whose request simply
+            // failed — see the two matching call sites above) kept "owning"
+            // its callback object through the ENTIRE backoff/idle window
+            // that follows. A late payload/transfer-update/initiation
+            // delivered on that same, now-defunct callback still passed the
+            // identity check during that window — e.g. a transfer-failure
+            // notification for the connection that just dropped could issue
+            // a second, redundant disconnectFromEndpoint() and, if Nearby
+            // answered with another onDisconnected, a second spurious retry
+            // for the very same lost connection.
+            currentAttemptCallback = null
             teardownTunnel()
             onDisconnected?.invoke()
             // A manual disconnect() already moved this to Idle/GaveUp before
@@ -492,26 +532,44 @@ class NearbyPeer(context: Context, private val localDisplayName: String) {
             }
             val input = payload.asStream()!!.asInputStream()
             val tunnelClient = PeerTunnelClient(input, output)
-            tunnel = tunnelClient
+            synchronized(tunnelLock) { tunnel = tunnelClient }
             tunnelClient.onLinkClosed = {
                 // The real relay's reader thread can already have this
                 // closure queued/in flight when a newer attempt replaces
-                // the tunnel — clearing the `tunnel` field alone doesn't
-                // recall an invocation already captured by that thread, so
-                // check identity here too, not just when scheduling it.
-                if (tunnel !== tunnelClient) {
+                // the tunnel — this closure runs on THAT thread, not the
+                // main thread every other mutation here happens on. The
+                // lock makes each individual read of `tunnel` atomic with a
+                // concurrent reassignment, but a single check performed
+                // once at the top is NOT enough by itself: onDisconnected
+                // below is arbitrary app callback code that can block for a
+                // while (it does in the standalone regression test), and a
+                // replacement attempt can take over THIS SAME endpoint
+                // during that window. So ownership is checked fresh right
+                // before each effect that actually depends on it — not
+                // decided once up front and trusted from then on.
+                if (synchronized(tunnelLock) { tunnel !== tunnelClient }) {
                     Log.w(TAG, "Ignoring onLinkClosed for a superseded tunnel ($endpointId)")
                 } else {
                     Log.d(TAG, "tunnel.onLinkClosed for $endpointId")
                     onDisconnected?.invoke()
-                    // The mux relay can die (IOException on its own reader
-                    // thread) without Nearby ever noticing/firing its own
-                    // onDisconnected — e.g. mid-session, well after the startup
-                    // watchdog above stopped being relevant. Force it so our
-                    // reconnect-with-backoff (driven by onDisconnected) always
-                    // gets a chance to run; a no-op if Nearby already agrees
-                    // the endpoint is gone.
-                    client.disconnectFromEndpoint(endpointId)
+                    // Re-validate immediately before the effect below: the
+                    // notification above can run arbitrary/blocking code,
+                    // during which a replacement attempt to this same
+                    // endpoint may already have taken over — trusting the
+                    // check made before that call would target the
+                    // replacement's connection, not this dead one's.
+                    if (synchronized(tunnelLock) { tunnel !== tunnelClient }) {
+                        Log.w(TAG, "Skipping disconnectFromEndpoint($endpointId) — a replacement took over during notification")
+                    } else {
+                        // The mux relay can die (IOException on its own reader
+                        // thread) without Nearby ever noticing/firing its own
+                        // onDisconnected — e.g. mid-session, well after the startup
+                        // watchdog above stopped being relevant. Force it so our
+                        // reconnect-with-backoff (driven by onDisconnected) always
+                        // gets a chance to run; a no-op if Nearby already agrees
+                        // the endpoint is gone.
+                        client.disconnectFromEndpoint(endpointId)
+                    }
                 }
             }
             val localPort = tunnelClient.start()
@@ -523,7 +581,8 @@ class NearbyPeer(context: Context, private val localDisplayName: String) {
             Log.d(TAG, "PeerTunnelClient started on localPort=$localPort for $endpointId")
             onTunnelReady?.invoke(localPort)
             handler.postDelayed({
-                if (tunnel === tunnelClient && !tunnelClient.hasReceivedAnyFrame) {
+                val stillCurrent = synchronized(tunnelLock) { tunnel === tunnelClient }
+                if (stillCurrent && !tunnelClient.hasReceivedAnyFrame) {
                     Log.w(TAG, "No frame received within watchdog window for $endpointId — treating link as stalled")
                     client.disconnectFromEndpoint(endpointId)
                 }
@@ -544,8 +603,17 @@ class NearbyPeer(context: Context, private val localDisplayName: String) {
     }
 
     private fun teardownTunnel() {
-        tunnel?.stop()
-        tunnel = null
+        // Claim (and clear) `tunnel` under the lock first, then stop it
+        // outside the lock — stop() can block waiting for the relay's
+        // reader thread to exit, and that thread may itself be trying to
+        // acquire tunnelLock inside onLinkClosed right now. Holding the
+        // lock across stop() would deadlock the two against each other.
+        val old = synchronized(tunnelLock) {
+            val t = tunnel
+            tunnel = null
+            t
+        }
+        old?.stop()
         outgoingOutput?.let { runCatching { it.close() } }
         outgoingOutput = null
     }

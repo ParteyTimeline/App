@@ -4,6 +4,9 @@ import com.google.android.gms.nearby.Nearby
 import com.google.android.gms.nearby.connection.*
 import com.parteytimeline.nearby.nearby.*
 import com.tinder.StateMachine
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicReference
 
 // Compile the unmodified production NearbyPeer with deterministic Android/Nearby
 // stand-ins and the real Tinder StateMachine 0.3.0 implementation. These tests
@@ -212,6 +215,83 @@ private fun staleTunnelClose() {
     } finally { peer.disconnect() }
 }
 
+private fun payloadFailureDuringBackoff() {
+    val (peer, client) = fixture()
+    try {
+        activate(peer, client)
+        val abandonedPayload = client.acceptedPayloads.last().second
+        val retries = mutableListOf<Int>()
+        peer.onReconnecting = { retries.add(it) }
+        client.lifecycle.onDisconnected("host")
+        check(state(peer) == PeerState.Reconnecting(1))
+        val before = client.disconnected.size
+        // A transfer failure belonging to the link that just disconnected
+        // can arrive before the delayed replacement request is issued.
+        abandonedPayload.onPayloadTransferUpdate("host", PayloadTransferUpdate(PayloadTransferUpdate.Status.FAILURE))
+        check(client.disconnected.size == before) {
+            "completed attempt's payload failure issued another disconnect during backoff"
+        }
+        check(retries == listOf(1)) { "one lost connection must schedule exactly one retry" }
+    } finally { peer.disconnect() }
+}
+
+private fun initiationAfterRequestFailure() {
+    val (peer, client) = fixture()
+    try {
+        peer.connectTo("host")
+        val abandoned = client.callbacks.last()
+        client.requests.last().fail()
+        check(state(peer) == PeerState.Idle)
+        val before = client.acceptedPayloads.size
+        abandoned.onConnectionInitiated("host", ConnectionInfo())
+        check(client.acceptedPayloads.size == before) {
+            "failed attempt still accepts a connection while peer is Idle"
+        }
+    } finally { peer.disconnect() }
+}
+
+private fun tunnelCloseRacingReplacement() {
+    val (peer, client) = fixture()
+    val entered = CountDownLatch(1)
+    val release = CountDownLatch(1)
+    val error = AtomicReference<Throwable?>()
+    var reader: Thread? = null
+    try {
+        activate(peer, client)
+        val field = peer.javaClass.getDeclaredField("tunnel").apply { isAccessible = true }
+        val oldTunnel = field.get(peer) as com.parteytimeline.nearby.tunnel.PeerTunnelClient
+        val close = checkNotNull(oldTunnel.onLinkClosed)
+        // The production mux-reader invokes this hook on its own thread.
+        // Pause after the identity guard has passed but before the endpoint
+        // disconnect. Latches select a valid ordering without timing sleeps.
+        peer.onDisconnected = {
+            entered.countDown()
+            check(release.await(5, TimeUnit.SECONDS)) { "test did not release reader callback" }
+        }
+        reader = Thread({
+            try { close() } catch (t: Throwable) { error.set(t) }
+        }, "review-mux-reader").also { it.start() }
+        check(entered.await(5, TimeUnit.SECONDS)) { "reader callback did not reach notification" }
+        peer.onDisconnected = null
+        peer.disconnect()
+        activate(peer, client)
+        val before = client.disconnected.size
+        release.countDown()
+        reader.join(5000)
+        check(!reader.isAlive) { "reader callback did not finish" }
+        error.get()?.let { throw it }
+        check(client.disconnected.size == before) {
+            "in-flight old tunnel callback disconnected the replacement after passing its identity guard"
+        }
+        check(state(peer) is PeerState.Active) { "replacement must remain active" }
+    } finally {
+        release.countDown()
+        reader?.join(5000)
+        peer.onDisconnected = null
+        peer.disconnect()
+    }
+}
+
 fun main() {
     val cases = listOf<Pair<String, () -> Unit>>(
         "retry exhaustion after request failures becomes terminal" to { exhausted("fail") },
@@ -228,6 +308,9 @@ fun main() {
         "stale incoming stream cannot activate a replacement attempt" to ::staleStream,
         "stale payload failure cannot disconnect a replacement attempt" to ::staleTransferFailure,
         "stale tunnel close cannot disconnect a replacement attempt" to ::staleTunnelClose,
+        "payload failure from disconnected attempt is ignored during backoff" to ::payloadFailureDuringBackoff,
+        "failed request cannot accept a later initiation while idle" to ::initiationAfterRequestFailure,
+        "in-flight tunnel close cannot disconnect a replacement after its identity check" to ::tunnelCloseRacingReplacement,
     )
     var failed = 0
     for ((name, run) in cases) {

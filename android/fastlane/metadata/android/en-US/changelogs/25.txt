@@ -1,0 +1,8 @@
+Bug and security fixes found during a closer review of the previous
+release: a reconnect counter that could get stuck and retry forever, a
+"permission needed" message that could get cleared too eagerly, and
+denying the notification permission no longer blocks hosting or joining.
+Also hardens the embedded server (used for Nearby/LAN play) against
+several issues, including a passwordless-join loophole on non-Android
+deployments and a few ways malformed input could crash it. No new
+features, and no changes to how a game looks or plays.

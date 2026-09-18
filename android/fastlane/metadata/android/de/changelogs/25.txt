@@ -1,0 +1,10 @@
+Fehler- und Sicherheitskorrekturen aus einer genaueren Überprüfung der
+letzten Version: ein Wiederverbindungszähler, der stecken bleiben und
+endlos weiterversuchen konnte, eine "Berechtigung erforderlich"-Meldung,
+die zu früh wieder verschwinden konnte, und das Ablehnen der
+Benachrichtigungsberechtigung blockiert jetzt nicht mehr das Hosten oder
+Beitreten. Härtet außerdem den eingebetteten Server (für Nearby-/LAN-Spiele)
+gegen mehrere Probleme ab, darunter eine Lücke für passwortlosen Beitritt
+auf Nicht-Android-Installationen und einige Wege, ihn mit fehlerhaften
+Eingaben abstürzen zu lassen. Keine neuen Funktionen, keine Änderungen am
+Spielablauf oder Aussehen.
